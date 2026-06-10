@@ -2,6 +2,7 @@
   "name": "spectra-studio",
   "private": true,
   "version": "1.0.0",
+  "packageManager": "pnpm@10.33.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
@@ -19,6 +20,7 @@
     "@radix-ui/react-slider": "latest",
     "@radix-ui/react-slot": "latest",
     "@radix-ui/react-tabs": "latest",
+    "@radix-ui/react-toast": "^1.2.16",
     "class-variance-authority": "latest",
     "clsx": "latest",
     "lucide-react": "latest",

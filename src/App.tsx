@@ -6,15 +6,12 @@ import {
   FileAudio,
   ImageDown,
   LoaderCircle,
-  LockKeyhole,
   Pause,
   Play,
   RotateCcw,
-  Sparkles,
   Upload,
   X,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -23,9 +20,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ToastViewport, type ToastMessage, type ToastVariant } from "@/components/ui/toast";
 import { PreviewCanvas } from "@/components/preview-canvas";
 import { analyzeAudioFile } from "@/lib/audio-analysis";
-import { estimateExportSize, exportPng, exportWebM } from "@/lib/export-video";
+import { estimateExportSize, exportPng, exportWebM, getExportMode } from "@/lib/export-video";
 import {
   DEFAULT_EXPORT_SETTINGS,
   DEFAULT_VISUALIZER_SETTINGS,
@@ -58,11 +56,17 @@ export function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const audioRef = useRef<HTMLAudioElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const analysisAbortRef = useRef<AbortController | null>(null);
   const exportAbortRef = useRef<AbortController | null>(null);
+  const dragDepthRef = useRef(0);
+
+  const notify = useCallback((variant: ToastVariant, title: string, description?: string) => {
+    const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+    setToasts((current) => [...current, { id, variant, title, description }]);
+  }, []);
 
   useEffect(() => () => {
     if (audioUrl) URL.revokeObjectURL(audioUrl);
@@ -82,13 +86,12 @@ export function App() {
 
   const loadFile = useCallback(async (nextFile: File) => {
     if (!nextFile.type.startsWith("audio/") && !/\.(wav|mp3|m4a|aac|ogg|oga|flac|opus)$/i.test(nextFile.name)) {
-      setError("Selecciona un archivo de audio WAV, MP3, M4A, AAC, OGG, OPUS o FLAC.");
+      notify("error", "Formato no compatible", "Selecciona un archivo WAV, MP3, M4A, AAC, OGG, OPUS o FLAC.");
       return;
     }
     analysisAbortRef.current?.abort();
     const controller = new AbortController();
     analysisAbortRef.current = controller;
-    setError(null);
     setIsPlaying(false);
     setCurrentTime(0);
     setAnalysis(null);
@@ -106,13 +109,14 @@ export function App() {
       }, controller.signal);
       setAnalysis(result);
       setAnalysisProgress(100);
+      notify("success", "Audio listo", `${nextFile.name} se analizó completamente en este dispositivo.`);
     } catch (caught) {
       if (caught instanceof DOMException && caught.name === "AbortError") return;
-      setError(caught instanceof Error ? caught.message : "No se pudo analizar el audio.");
+      notify("error", "No se pudo analizar el audio", caught instanceof Error ? caught.message : undefined);
     } finally {
       if (analysisAbortRef.current === controller) setIsAnalyzing(false);
     }
-  }, []);
+  }, [notify]);
 
   const clearFile = () => {
     analysisAbortRef.current?.abort();
@@ -152,20 +156,40 @@ export function App() {
     exportAbortRef.current = controller;
     setIsExporting(true);
     setExportProgress(0);
-    setError(null);
     try {
       const baseName = file.name.replace(/\.[^.]+$/, "");
       await exportWebM(analysis, visualizer, exportSettings, `${baseName}-spectrum.webm`, {
         signal: controller.signal,
         onProgress: (progress) => setExportProgress(progress * 100),
+        onModeChange: (mode) => {
+          if (mode === "realtime") {
+            notify(
+              "info",
+              "Modo compatible activado",
+              window.isSecureContext
+                ? "WebCodecs no está disponible en este equipo. El video se renderizará en tiempo real."
+                : "Esta dirección HTTP no es un contexto seguro. El video se renderizará en tiempo real y el fondo transparente se sustituirá por chroma key.",
+            );
+          }
+        },
       });
+      notify("success", "Exportación terminada", `${baseName}-spectrum.webm está listo.`);
     } catch (caught) {
-      if (!(caught instanceof DOMException && caught.name === "AbortError")) {
-        setError(caught instanceof Error ? caught.message : "No se pudo exportar el video.");
-      }
+      if (caught instanceof DOMException && caught.name === "AbortError") notify("info", "Exportación cancelada");
+      else notify("error", "No se pudo exportar el video", caught instanceof Error ? caught.message : undefined);
     } finally {
       setIsExporting(false);
       exportAbortRef.current = null;
+    }
+  };
+
+  const savePng = async () => {
+    if (!canvasRef.current || !file) return;
+    try {
+      await exportPng(canvasRef.current, file.name);
+      notify("success", "PNG guardado", "El fotograma de la vista previa se descargó correctamente.");
+    } catch (caught) {
+      notify("error", "No se pudo guardar el PNG", caught instanceof Error ? caught.message : undefined);
     }
   };
 
@@ -177,6 +201,7 @@ export function App() {
     () => analysis ? estimateExportSize(exportSettings, analysis.duration) : 0,
     [analysis, exportSettings],
   );
+  const exportMode = useMemo(() => getExportMode(), []);
 
   return (
     <main className="min-h-screen">
@@ -193,23 +218,28 @@ export function App() {
         <section className="min-w-0 space-y-5">
           {!file ? (
             <Card
-              className={cn("glass flex min-h-[540px] items-center justify-center border-dashed transition-colors", isDragging && "border-primary bg-primary/5")}
-              onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }}
-              onDragLeave={() => setIsDragging(false)}
+              className={cn("glass relative flex min-h-[540px] items-center justify-center overflow-hidden border-dashed transition-all duration-300", isDragging && "scale-[0.995] border-primary bg-primary/10 shadow-2xl shadow-primary/10")}
+              onDragEnter={(event) => { event.preventDefault(); dragDepthRef.current += 1; setIsDragging(true); }}
+              onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }}
+              onDragLeave={() => { dragDepthRef.current -= 1; if (dragDepthRef.current <= 0) { dragDepthRef.current = 0; setIsDragging(false); } }}
               onDrop={(event) => {
                 event.preventDefault();
+                dragDepthRef.current = 0;
                 setIsDragging(false);
                 const dropped = event.dataTransfer.files[0];
                 if (dropped) void loadFile(dropped);
               }}
             >
+              <div className={cn("pointer-events-none absolute inset-3 rounded-xl border border-primary/0 opacity-0 transition-all duration-300", isDragging && "inset-5 border-primary/50 opacity-100")} />
+              <div className={cn("pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,hsl(var(--primary)/0.16),transparent_48%)] opacity-0 transition-opacity duration-300", isDragging && "opacity-100")} />
               <CardContent className="flex max-w-xl flex-col items-center px-6 py-16 text-center">
                 <div className="relative mb-7">
-                  <div className="absolute inset-0 rounded-full bg-primary/25 blur-2xl" />
-                  <div className="relative flex h-20 w-20 items-center justify-center rounded-2xl border bg-card shadow-2xl"><Upload className="h-8 w-8 text-primary" /></div>
+                  <div className={cn("absolute inset-0 rounded-full bg-primary/25 blur-2xl transition-all", isDragging && "scale-150 bg-primary/40")} />
+                  {isDragging && <div className="absolute inset-0 animate-drop-ring rounded-2xl border-2 border-primary" />}
+                  <div className={cn("relative flex h-20 w-20 items-center justify-center rounded-2xl border bg-card shadow-2xl transition-colors", isDragging && "animate-drop-float border-primary bg-primary text-primary-foreground")}><Upload className={cn("h-8 w-8 text-primary transition-colors", isDragging && "text-primary-foreground")} /></div>
                 </div>
                 <h1 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">Convierte tu audio en un espectro listo para video</h1>
-                <p className="mt-4 max-w-md text-sm leading-6 text-muted-foreground">Arrastra un WAV, MP3 u otro audio compatible. El archivo se procesa en este dispositivo y nunca se sube.</p>
+                <p className={cn("mt-4 max-w-md text-sm leading-6 text-muted-foreground transition-colors", isDragging && "font-medium text-primary")}>{isDragging ? "Suelta el audio para comenzar" : "Arrastra un WAV, MP3 u otro audio compatible. El archivo se procesa en este dispositivo y nunca se sube."}</p>
                 <Button asChild className="mt-7 gap-2 shadow-lg shadow-primary/20">
                   <label className="cursor-pointer"><FileAudio className="h-4 w-4" />Seleccionar audio<input type="file" accept="audio/*,.wav,.mp3,.m4a,.aac,.ogg,.oga,.flac,.opus" className="sr-only" onChange={(event) => { const selected = event.target.files?.[0]; if (selected) void loadFile(selected); }} /></label>
                 </Button>
@@ -254,7 +284,6 @@ export function App() {
               </Card>
             </>
           )}
-          {error && <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-red-200">{error}</div>}
         </section>
 
         <aside>
@@ -290,8 +319,8 @@ export function App() {
                   ) : (
                     <Button className="w-full gap-2 shadow-lg shadow-primary/20" disabled={!analysis || isAnalyzing} onClick={() => void beginExport()}><Download className="h-4 w-4" />Exportar overlay WebM</Button>
                   )}
-                  <Button variant="outline" className="w-full gap-2" disabled={!analysis} onClick={() => { if (canvasRef.current && file) exportPng(canvasRef.current, file.name); }}><ImageDown className="h-4 w-4" />Guardar frame PNG</Button>
-                  <p className="text-center text-[10px] leading-4 text-muted-foreground">La exportación acelerada requiere Chrome o Edge. El audio original no se incluye en el overlay.</p>
+                  <Button variant="outline" className="w-full gap-2" disabled={!analysis} onClick={() => void savePng()}><ImageDown className="h-4 w-4" />Guardar frame PNG</Button>
+                  <p className="text-center text-[10px] leading-4 text-muted-foreground">{exportMode === "accelerated" ? "Exportación acelerada disponible." : exportMode === "realtime" ? "Modo compatible disponible: renderiza en tiempo real." : "Este navegador no puede exportar video."} El audio original no se incluye.</p>
                 </TabsContent>
               </CardContent>
             </Tabs>
@@ -303,6 +332,7 @@ export function App() {
           <track kind="captions" src="data:text/vtt,WEBVTT%0A%0A" srcLang="es" label="Audio sin diálogo" default />
         </audio>
       )}
+      <ToastViewport toasts={toasts} onDismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))} />
     </main>
   );
 }

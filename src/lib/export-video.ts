@@ -5,8 +5,11 @@ import { renderVisualizer } from "./visualizer-renderer";
 
 interface ExportCallbacks {
   onProgress: (value: number) => void;
+  onModeChange?: (mode: ExportMode) => void;
   signal?: AbortSignal;
 }
+
+export type ExportMode = "accelerated" | "realtime";
 
 const QUALITY_FACTOR = { draft: 0.025, standard: 0.045, high: 0.075 } as const;
 
@@ -22,15 +25,29 @@ export async function exportWebM(
   fileName: string,
   callbacks: ExportCallbacks,
 ) {
-  if (!("VideoEncoder" in window)) {
-    throw new Error("Tu navegador no permite exportación acelerada. Usa Chrome o Edge actualizado.");
+  if (supportsAcceleratedExport()) {
+    return exportWithWebCodecs(analysis, visualizer, settings, fileName, callbacks);
   }
-  if (!("OffscreenCanvas" in window)) {
-    throw new Error("Tu navegador no permite renderizar el video fuera de pantalla. Usa Chrome o Edge actualizado.");
+  if (supportsRealtimeExport()) {
+    callbacks.onModeChange?.("realtime");
+    return exportWithMediaRecorder(analysis, visualizer, settings, fileName, callbacks);
   }
+  throw new Error("Este navegador no ofrece WebCodecs ni MediaRecorder para crear el video.");
+}
 
-  const fileHandle = await chooseOutputFile(fileName);
+export function getExportMode(): ExportMode | null {
+  if (supportsAcceleratedExport()) return "accelerated";
+  if (supportsRealtimeExport()) return "realtime";
+  return null;
+}
 
+async function exportWithWebCodecs(
+  analysis: AudioAnalysis,
+  visualizer: VisualizerSettings,
+  settings: ExportSettings,
+  fileName: string,
+  callbacks: ExportCallbacks,
+) {
   const config: VideoEncoderConfig = {
     codec: "vp09.00.10.08",
     width: settings.width,
@@ -41,7 +58,15 @@ export async function exportWebM(
     latencyMode: "quality",
   };
   const support = await VideoEncoder.isConfigSupported(config);
-  if (!support.supported) throw new Error("Este equipo no soporta codificación VP9 con la configuración seleccionada.");
+  if (!support.supported) {
+    if (supportsRealtimeExport()) {
+      callbacks.onModeChange?.("realtime");
+      return exportWithMediaRecorder(analysis, visualizer, settings, fileName, callbacks);
+    }
+    throw new Error("Este equipo no soporta codificación VP9 con la configuración seleccionada.");
+  }
+  callbacks.onModeChange?.("accelerated");
+  const fileHandle = await chooseOutputFile(fileName);
 
   const writable = fileHandle ? await fileHandle.createWritable() : null;
   const target = writable ? new FileSystemWritableFileStreamTarget(writable) : new ArrayBufferTarget();
@@ -104,10 +129,93 @@ export async function exportWebM(
   }
 }
 
+async function exportWithMediaRecorder(
+  analysis: AudioAnalysis,
+  visualizer: VisualizerSettings,
+  settings: ExportSettings,
+  fileName: string,
+  callbacks: ExportCallbacks,
+) {
+  const canvas = document.createElement("canvas");
+  canvas.width = settings.width;
+  canvas.height = settings.height;
+  const context = canvas.getContext("2d", { alpha: true });
+  if (!context) throw new Error("No se pudo crear el lienzo de exportación compatible.");
+
+  const mimeType = getRecorderMimeType();
+  if (!mimeType) throw new Error("Chrome no ofrece un encoder WebM compatible en este contexto.");
+  const stream = canvas.captureStream(settings.fps);
+  const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: getBitrate(settings) });
+  const fileHandle = await chooseOutputFile(fileName);
+  const writable = fileHandle ? await fileHandle.createWritable() : null;
+  const chunks: Blob[] = [];
+  let writeQueue = Promise.resolve();
+  const spectrum = new Float32Array(analysis.bands);
+  const fallbackSettings = visualizer.background === "transparent"
+    ? { ...visualizer, background: "chroma" as const }
+    : visualizer;
+
+  recorder.ondataavailable = (event) => {
+    if (!event.data.size) return;
+    if (writable) writeQueue = writeQueue.then(() => writable.write(event.data));
+    else chunks.push(event.data);
+  };
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let animationFrame = 0;
+      const startedAt = performance.now();
+      const abort = () => {
+        cancelAnimationFrame(animationFrame);
+        if (recorder.state !== "inactive") recorder.stop();
+        reject(new DOMException("Exportación cancelada", "AbortError"));
+      };
+      callbacks.signal?.addEventListener("abort", abort, { once: true });
+      recorder.onerror = () => reject(new Error("MediaRecorder detuvo la exportación."));
+      recorder.onstop = () => {
+        callbacks.signal?.removeEventListener("abort", abort);
+        resolve();
+      };
+
+      const draw = (now: number) => {
+        const time = Math.min(analysis.duration, (now - startedAt) / 1000);
+        fillSpectrumFrame(analysis, time, spectrum);
+        renderVisualizer(context, spectrum, fallbackSettings, { width: settings.width, height: settings.height, time });
+        callbacks.onProgress(time / analysis.duration);
+        if (time >= analysis.duration) {
+          recorder.stop();
+          return;
+        }
+        animationFrame = requestAnimationFrame(draw);
+      };
+
+      recorder.start(1_000);
+      animationFrame = requestAnimationFrame(draw);
+    });
+
+    await writeQueue;
+    callbacks.onProgress(1);
+    if (writable) await writable.close();
+    else downloadBlob(new Blob(chunks, { type: mimeType }), fileName);
+  } catch (error) {
+    if (writable) await writable.abort().catch(() => undefined);
+    throw error;
+  } finally {
+    stream.getTracks().forEach((track) => track.stop());
+  }
+}
+
 export function exportPng(canvas: HTMLCanvasElement, fileName: string) {
-  canvas.toBlob((blob) => {
-    if (blob) downloadBlob(blob, fileName.replace(/\.[^.]+$/, "") + ".png");
-  }, "image/png");
+  return new Promise<void>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error("No se pudo generar la imagen PNG."));
+        return;
+      }
+      downloadBlob(blob, fileName.replace(/\.[^.]+$/, "") + ".png");
+      resolve();
+    }, "image/png");
+  });
 }
 
 function getBitrate(settings: ExportSettings) {
@@ -134,6 +242,23 @@ function downloadBlob(blob: Blob, fileName: string) {
 
 function sleep(milliseconds: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function supportsAcceleratedExport() {
+  return window.isSecureContext
+    && typeof globalThis.VideoEncoder !== "undefined"
+    && typeof globalThis.VideoFrame !== "undefined"
+    && typeof globalThis.OffscreenCanvas !== "undefined";
+}
+
+function supportsRealtimeExport() {
+  const canvas = document.createElement("canvas");
+  return typeof globalThis.MediaRecorder !== "undefined" && typeof canvas.captureStream === "function";
+}
+
+function getRecorderMimeType() {
+  return ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"]
+    .find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) ?? null;
 }
 
 declare global {
