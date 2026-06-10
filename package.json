@@ -39,7 +39,7 @@
     "autoprefixer": "latest",
     "jsdom": "latest",
     "postcss": "latest",
-    "tailwindcss": "^3.4.17",
+    "tailwindcss": "^3.4.19",
     "typescript": "latest",
     "vite": "latest",
     "vitest": "latest"

@@ -82,7 +82,7 @@ importers:
         specifier: latest
         version: 8.5.15
       tailwindcss:
-        specifier: ^3.4.17
+        specifier: ^3.4.19
         version: 3.4.19
       typescript:
         specifier: latest
