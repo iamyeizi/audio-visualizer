@@ -1,0 +1,52 @@
+# Spectra Studio
+
+Web app client-side para convertir audio en overlays de espectro destinados a editores como CapCut. El audio no se sube a un servidor.
+
+## Funciones
+
+- WAV, MP3, M4A, AAC, OGG, OPUS y FLAC según los codecs disponibles en el navegador.
+- Seis estilos: Barras, Espejo, Línea, Radial, Puntos y Onda.
+- Color doble, opacidad, amplitud, cut, suavizado, grosor y brillo.
+- Preview sincronizado con reproducción y búsqueda.
+- Exportación WebM VP9 acelerada, sin audio, a 24/30/60 fps.
+- Fondo transparente, negro o verde chroma.
+- Resoluciones HD, Full HD, vertical, cuadrada y 4K.
+- Escritura directa a disco con File System Access API para no guardar videos largos completos en RAM.
+
+## Desarrollo
+
+Requiere Node.js 22 o superior.
+
+```bash
+npm install
+npm run dev
+```
+
+La app queda disponible en `http://localhost:5173`.
+
+## Verificación
+
+```bash
+npm test
+npm run build
+```
+
+## Docker
+
+```bash
+docker compose up --build
+```
+
+Abrir `http://localhost:8081`.
+
+## Flujo recomendado para CapCut
+
+1. Cargar el audio y esperar a que termine el análisis.
+2. Ajustar el diseño observando la vista previa.
+3. Exportar con fondo `Transparente` en Chrome o Edge.
+4. Si CapCut no reconoce el canal alpha, exportar con `Verde chroma` y aplicar Chroma Key dentro de CapCut.
+5. Colocar el overlay desde el segundo 0 del video. La duración exportada coincide con la del audio.
+
+## Consideraciones para audios de una hora
+
+El análisis reduce el audio a 12 kHz y se ejecuta en un Web Worker. La exportación se codifica más rápido que tiempo real cuando el hardware lo permite. El tiempo final depende de resolución, fps, estilo y GPU. Chrome y Edge ofrecen el flujo más completo; otros navegadores pueden reproducir y previsualizar, pero no siempre exponen `VideoEncoder` o guardado directo a disco.

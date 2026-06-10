@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    --background: 240 7% 5%;
+    --foreground: 0 0% 96%;
+    --card: 240 6% 8%;
+    --card-foreground: 0 0% 96%;
+    --primary: 263 85% 67%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 5% 13%;
+    --secondary-foreground: 0 0% 94%;
+    --muted: 240 5% 13%;
+    --muted-foreground: 240 5% 62%;
+    --accent: 240 5% 16%;
+    --accent-foreground: 0 0% 96%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5% 17%;
+    --input: 240 5% 18%;
+    --ring: 263 85% 67%;
+    --radius: 0.75rem;
+  }
+
+  * { @apply border-border; }
+  html { @apply bg-background; }
+  body {
+    @apply min-h-screen bg-background text-foreground antialiased;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background-image:
+      radial-gradient(circle at 50% -15%, hsl(263 85% 60% / 0.12), transparent 28rem),
+      linear-gradient(hsl(0 0% 100% / 0.018) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(0 0% 100% / 0.018) 1px, transparent 1px);
+    background-size: auto, 32px 32px, 32px 32px;
+  }
+  button, input { font: inherit; }
+}
+
+@layer utilities {
+  .glass { background: hsl(var(--card) / 0.78); backdrop-filter: blur(18px); }
+  .scrollbar-thin { scrollbar-width: thin; scrollbar-color: hsl(var(--border)) transparent; }
+}
