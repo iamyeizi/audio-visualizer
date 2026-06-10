@@ -7,7 +7,6 @@ describe("App", () => {
     render(<App />);
     expect(screen.getByText("Spectra Studio")).toBeInTheDocument();
     expect(screen.getByText(/Convierte tu audio/)).toBeInTheDocument();
-    expect(screen.getByText("100% local y privado")).toBeInTheDocument();
     expect(screen.getByLabelText("Seleccionar audio")).toHaveAttribute("type", "file");
   });
 });

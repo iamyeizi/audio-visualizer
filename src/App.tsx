@@ -186,7 +186,6 @@ export function App() {
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-lg shadow-primary/20"><AudioLines className="h-5 w-5" /></div>
             <div><p className="text-sm font-semibold tracking-tight">Spectra Studio</p><p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Audio visualizer</p></div>
           </div>
-          <Badge variant="outline" className="gap-1.5 border-emerald-500/25 bg-emerald-500/5 text-emerald-300"><LockKeyhole className="h-3 w-3" />100% local y privado</Badge>
         </div>
       </header>
 
@@ -209,13 +208,11 @@ export function App() {
                   <div className="absolute inset-0 rounded-full bg-primary/25 blur-2xl" />
                   <div className="relative flex h-20 w-20 items-center justify-center rounded-2xl border bg-card shadow-2xl"><Upload className="h-8 w-8 text-primary" /></div>
                 </div>
-                <Badge variant="secondary" className="mb-4 gap-1.5"><Sparkles className="h-3 w-3" />Seis visualizadores incluidos</Badge>
                 <h1 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">Convierte tu audio en un espectro listo para video</h1>
                 <p className="mt-4 max-w-md text-sm leading-6 text-muted-foreground">Arrastra un WAV, MP3 u otro audio compatible. El archivo se procesa en este dispositivo y nunca se sube.</p>
                 <Button asChild className="mt-7 gap-2 shadow-lg shadow-primary/20">
                   <label className="cursor-pointer"><FileAudio className="h-4 w-4" />Seleccionar audio<input type="file" accept="audio/*,.wav,.mp3,.m4a,.aac,.ogg,.oga,.flac,.opus" className="sr-only" onChange={(event) => { const selected = event.target.files?.[0]; if (selected) void loadFile(selected); }} /></label>
                 </Button>
-                <p className="mt-4 text-xs text-muted-foreground">Optimizado para audios largos · Sin límite artificial de duración</p>
               </CardContent>
             </Card>
           ) : (
