@@ -1,4 +1,3 @@
-import { ArrayBufferTarget, FileSystemWritableFileStreamTarget, Muxer } from "webm-muxer";
 import { fillSpectrumFrame } from "./audio-analysis";
 import type { AudioAnalysis, ExportSettings, VisualizerSettings } from "./types";
 import { renderVisualizer } from "./visualizer-renderer";
@@ -10,6 +9,11 @@ interface ExportCallbacks {
 }
 
 export type ExportMode = "accelerated" | "realtime";
+
+type WebCodecsWorkerMessage =
+  | { type: "progress"; value: number }
+  | { type: "complete"; buffer?: ArrayBuffer }
+  | { type: "error"; name: string; message: string };
 
 const QUALITY_FACTOR = { draft: 0.025, standard: 0.045, high: 0.075 } as const;
 
@@ -81,84 +85,105 @@ async function exportWithWebCodecs(
   }
   callbacks.onModeChange?.("accelerated");
 
-  const writable = fileHandle ? await fileHandle.createWritable() : null;
-  const target = writable ? new FileSystemWritableFileStreamTarget(writable) : new ArrayBufferTarget();
-  const muxer = new Muxer({
-    target,
-    video: {
-      codec: "V_VP9",
-      width: settings.width,
-      height: settings.height,
-      frameRate: settings.fps,
-      alpha: keepAlpha,
-    },
-  });
-
-  let encoderError: DOMException | null = null;
-  const encoder = new VideoEncoder({
-    output: (chunk, metadata) => muxer.addVideoChunk(chunk, metadata),
-    error: (error) => { encoderError = error; },
-  });
-  encoder.configure(support.config ?? config);
-
-  const canvas = new OffscreenCanvas(settings.width, settings.height);
-  const context = canvas.getContext("2d", { alpha: keepAlpha });
-  if (!context) throw new Error("No se pudo crear el lienzo de exportación.");
-  const spectrum = new Float32Array(analysis.bands);
-  const preparedSpectrum = new Float32Array(analysis.bands);
-  const schedule = createFrameSchedule(analysis.duration, settings.fps);
+  let result: { buffer?: ArrayBuffer };
   try {
-    for (let frameIndex = 0; frameIndex < schedule.timestamps.length; frameIndex += 1) {
-      if (callbacks.signal?.aborted) throw new DOMException("Exportación cancelada", "AbortError");
-      if (encoderError) throw encoderError;
-      while (encoder.encodeQueueSize > 8) await sleep(4);
-
-      const time = frameIndex / settings.fps;
-      fillSpectrumFrame(analysis, time, spectrum);
-      renderVisualizer(context, spectrum, visualizer, {
-        width: settings.width,
-        height: settings.height,
-        time,
-        preparedSpectrum,
-      });
-      const timestamp = schedule.timestamps[frameIndex];
-      const nextTimestamp = schedule.timestamps[frameIndex + 1] ?? schedule.endTimestamp;
-      const frame = new VideoFrame(canvas, {
-        timestamp,
-        duration: Math.max(1, nextTimestamp - timestamp),
-        alpha: keepAlpha ? "keep" : "discard",
-      });
-      encoder.encode(frame, { keyFrame: frameIndex % (settings.fps * 4) === 0 });
-      frame.close();
-
-      if (frameIndex % settings.fps === 0) {
-        callbacks.onProgress(frameIndex / schedule.timestamps.length);
-        await sleep(0);
-      }
-    }
-
-    // webm-muxer derives the container duration from the last chunk timestamp.
-    // An endpoint frame prevents the file from ending one frame before the audio.
-    const endpointFrame = new VideoFrame(canvas, {
-      timestamp: schedule.endTimestamp,
-      duration: 1,
-      alpha: keepAlpha ? "keep" : "discard",
-    });
-    encoder.encode(endpointFrame, { keyFrame: true });
-    endpointFrame.close();
-    await encoder.flush();
-    muxer.finalize();
-    callbacks.onProgress(1);
-    if (writable) {
-      await writable.close();
-    } else if (target instanceof ArrayBufferTarget) {
-      downloadBlob(new Blob([target.buffer], { type: "video/webm" }), fileName);
-    }
+    result = await exportWithWebCodecsWorker(analysis, visualizer, settings, support.config ?? config, fileHandle, callbacks);
   } catch (error) {
-    if (writable) await writable.abort().catch(() => undefined);
+    if (isWorkerUnsupportedError(error) && supportsRealtimeExport()) {
+      callbacks.onModeChange?.("realtime");
+      return exportWithMediaRecorder(analysis, visualizer, settings, fileName, callbacks, fileHandle);
+    }
+    if (fileHandle && isFileHandleCloneError(error)) {
+      result = await exportWithWebCodecsWorker(analysis, visualizer, settings, support.config ?? config, null, callbacks);
+      if (result.buffer) {
+        await writeBlobToFileHandle(fileHandle, new Blob([result.buffer], { type: "video/webm" }));
+        callbacks.onProgress(1);
+        return;
+      }
+    } else {
+      throw error;
+    }
+  }
+  if (result.buffer) downloadBlob(new Blob([result.buffer], { type: "video/webm" }), fileName);
+  callbacks.onProgress(1);
+}
+
+function exportWithWebCodecsWorker(
+  analysis: AudioAnalysis,
+  visualizer: VisualizerSettings,
+  settings: ExportSettings,
+  config: VideoEncoderConfig,
+  fileHandle: FileSystemFileHandle | null,
+  callbacks: ExportCallbacks,
+) {
+  if (callbacks.signal?.aborted) throw new DOMException("Exportación cancelada", "AbortError");
+  const worker = new Worker(new URL("../workers/webcodecs-export.worker.ts", import.meta.url), { type: "module" });
+  const frames = analysis.frames.slice();
+
+  return new Promise<{ buffer?: ArrayBuffer }>((resolve, reject) => {
+    const cleanup = () => {
+      callbacks.signal?.removeEventListener("abort", abort);
+      worker.removeEventListener("message", onMessage);
+      worker.removeEventListener("error", onError);
+      worker.terminate();
+    };
+    const abort = () => {
+      worker.postMessage({ type: "abort" });
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error("El worker de WebCodecs se detuvo inesperadamente."));
+    };
+    const onMessage = (event: MessageEvent<WebCodecsWorkerMessage>) => {
+      const message = event.data;
+      if (message.type === "progress") {
+        callbacks.onProgress(message.value);
+        return;
+      }
+      cleanup();
+      if (message.type === "error") {
+        reject(createWorkerError(message.name, message.message));
+        return;
+      }
+      resolve({ buffer: message.buffer });
+    };
+
+    callbacks.signal?.addEventListener("abort", abort, { once: true });
+    worker.addEventListener("message", onMessage);
+    worker.addEventListener("error", onError);
+
+    try {
+      worker.postMessage(
+        {
+          type: "start",
+          analysis: {
+            duration: analysis.duration,
+            frameRate: analysis.frameRate,
+            bands: analysis.bands,
+            frames: frames.buffer,
+          },
+          visualizer,
+          settings,
+          config,
+          fileHandle,
+        },
+        [frames.buffer],
+      );
+    } catch (error) {
+      cleanup();
+      reject(error);
+    }
+  });
+}
+
+async function writeBlobToFileHandle(fileHandle: FileSystemFileHandle, blob: Blob) {
+  const writable = await fileHandle.createWritable();
+  try {
+    await writable.write(blob);
+    await writable.close();
+  } catch (error) {
+    await writable.abort().catch(() => undefined);
     throw error;
-  } finally {
-    encoder.close();
   }
 }
 
@@ -268,8 +293,19 @@ function downloadBlob(blob: Blob, fileName: string) {
   setTimeout(() => URL.revokeObjectURL(url), 2_000);
 }
 
-function sleep(milliseconds: number) {
-  return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+function createWorkerError(name: string, message: string) {
+  if (name === "AbortError") return new DOMException(message, "AbortError");
+  const error = new Error(message);
+  error.name = name || "Error";
+  return error;
+}
+
+function isFileHandleCloneError(error: unknown) {
+  return error instanceof DOMException && error.name === "DataCloneError";
+}
+
+function isWorkerUnsupportedError(error: unknown) {
+  return error instanceof DOMException && error.name === "NotSupportedError";
 }
 
 function supportsAcceleratedExport() {
