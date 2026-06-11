@@ -247,19 +247,6 @@ async function exportWithMediaRecorder(
   }
 }
 
-export function exportPng(canvas: HTMLCanvasElement, fileName: string) {
-  return new Promise<void>((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (!blob) {
-        reject(new Error("No se pudo generar la imagen PNG."));
-        return;
-      }
-      downloadBlob(blob, fileName.replace(/\.[^.]+$/, "") + ".png");
-      resolve();
-    }, "image/png");
-  });
-}
-
 function getBitrate(settings: ExportSettings) {
   const raw = settings.width * settings.height * settings.fps * QUALITY_FACTOR[settings.quality];
   const minimum = settings.width * settings.height <= 854 * 480 ? 250_000 : 500_000;

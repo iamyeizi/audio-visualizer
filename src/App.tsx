@@ -4,7 +4,6 @@ import {
   Check,
   Download,
   FileAudio,
-  ImageDown,
   LoaderCircle,
   Pause,
   Play,
@@ -23,7 +22,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToastViewport, type ToastMessage, type ToastVariant } from "@/components/ui/toast";
 import { PreviewCanvas } from "@/components/preview-canvas";
 import { analyzeAudioFile } from "@/lib/audio-analysis";
-import { estimateExportSize, exportPng, exportWebM, getExportMode } from "@/lib/export-video";
+import { exportWithFfmpeg } from "@/lib/export-ffmpeg";
+import { estimateExportSize, exportWebM, getExportMode } from "@/lib/export-video";
 import {
   DEFAULT_EXPORT_SETTINGS,
   DEFAULT_VISUALIZER_SETTINGS,
@@ -43,6 +43,8 @@ const RESOLUTIONS = [
   { value: "3840x2160", label: "4K · 3840 × 2160" },
 ];
 
+type ExportEngine = "browser" | "ffmpeg";
+
 export function App() {
   const [file, setFile] = useState<File | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -57,9 +59,9 @@ export function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
+  const [exportEngine, setExportEngine] = useState<ExportEngine>("browser");
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const audioRef = useRef<HTMLAudioElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const analysisAbortRef = useRef<AbortController | null>(null);
   const exportAbortRef = useRef<AbortController | null>(null);
   const dragDepthRef = useRef(0);
@@ -159,6 +161,15 @@ export function App() {
     setExportProgress(0);
     try {
       const baseName = file.name.replace(/\.[^.]+$/, "");
+      if (exportEngine === "ffmpeg") {
+        await exportWithFfmpeg(file, visualizer, exportSettings, `${baseName}-spectrum-ffmpeg.mp4`, {
+          signal: controller.signal,
+          onProgress: (progress) => setExportProgress(progress * 100),
+        });
+        notify("success", "Exportación terminada", `${baseName}-spectrum-ffmpeg.mp4 está listo.`);
+        return;
+      }
+
       await exportWebM(analysis, visualizer, exportSettings, `${baseName}-spectrum.webm`, {
         signal: controller.signal,
         onProgress: (progress) => setExportProgress(progress * 100),
@@ -181,16 +192,6 @@ export function App() {
     } finally {
       setIsExporting(false);
       exportAbortRef.current = null;
-    }
-  };
-
-  const savePng = async () => {
-    if (!canvasRef.current || !file) return;
-    try {
-      await exportPng(canvasRef.current, file.name);
-      notify("success", "PNG guardado", "El fotograma de la vista previa se descargó correctamente.");
-    } catch (caught) {
-      notify("error", "No se pudo guardar el PNG", caught instanceof Error ? caught.message : undefined);
     }
   };
 
@@ -250,7 +251,7 @@ export function App() {
             <>
               <Card className="glass overflow-hidden">
                 <div className="relative aspect-video w-full overflow-hidden bg-[linear-gradient(45deg,#121216_25%,transparent_25%),linear-gradient(-45deg,#121216_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#121216_75%),linear-gradient(-45deg,transparent_75%,#121216_75%)] bg-[length:24px_24px] bg-[position:0_0,0_12px,12px_-12px,-12px_0px]">
-                  <PreviewCanvas ref={canvasRef} analysis={analysis} settings={visualizer} time={currentTime} />
+                  <PreviewCanvas analysis={analysis} settings={visualizer} time={currentTime} />
                   {isAnalyzing && (
                     <div className="absolute inset-0 flex items-center justify-center bg-background/75 backdrop-blur-sm">
                       <div className="w-72 text-center"><LoaderCircle className="mx-auto mb-4 h-7 w-7 animate-spin text-primary" /><p className="text-sm font-medium">{analysisPhase}</p><Progress value={analysisProgress} className="mt-4" /><p className="mt-2 text-xs text-muted-foreground">{Math.round(analysisProgress)}%</p></div>
@@ -308,19 +309,19 @@ export function App() {
                 </TabsContent>
 
                 <TabsContent value="export" className="space-y-5">
+                  <div className="space-y-2"><Label>Motor</Label><Select value={exportEngine} onValueChange={(value) => setExportEngine(value as ExportEngine)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="browser">Navegador · WebM</SelectItem><SelectItem value="ffmpeg">FFmpeg · MP4 chroma</SelectItem></SelectContent></Select></div>
                   <div className="space-y-2"><Label>Fondo del overlay</Label><Select value={visualizer.background} onValueChange={(value) => updateVisualizer("background", value as VisualizerSettings["background"])}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="chroma">Verde chroma · recomendado CapCut</SelectItem><SelectItem value="transparent">Transparente · WebM alpha</SelectItem><SelectItem value="black">Negro</SelectItem></SelectContent></Select></div>
                   <div className="space-y-2"><Label>Resolución</Label><Select value={`${exportSettings.width}x${exportSettings.height}`} onValueChange={(value) => { const [width, height] = value.split("x").map(Number); setExportSettings((current) => ({ ...current, width, height })); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{RESOLUTIONS.map((resolution) => <SelectItem key={resolution.value} value={resolution.value}>{resolution.label}</SelectItem>)}</SelectContent></Select></div>
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-2"><Label>Fotogramas</Label><Select value={String(exportSettings.fps)} onValueChange={(value) => setExportSettings((current) => ({ ...current, fps: Number(value) }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="12">12 fps</SelectItem><SelectItem value="24">24 fps</SelectItem><SelectItem value="30">30 fps</SelectItem><SelectItem value="60">60 fps</SelectItem></SelectContent></Select></div>
+                    <div className="space-y-2"><Label>Fotogramas</Label><Select value={String(exportSettings.fps)} onValueChange={(value) => setExportSettings((current) => ({ ...current, fps: Number(value) }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="24">24 fps</SelectItem><SelectItem value="25">25 fps</SelectItem><SelectItem value="30">30 fps</SelectItem><SelectItem value="48">48 fps</SelectItem><SelectItem value="50">50 fps</SelectItem><SelectItem value="60">60 fps</SelectItem></SelectContent></Select></div>
                     <div className="space-y-2"><Label>Calidad</Label><Select value={exportSettings.quality} onValueChange={(value) => setExportSettings((current) => ({ ...current, quality: value as ExportSettings["quality"] }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="draft">Borrador</SelectItem><SelectItem value="standard">Estándar</SelectItem><SelectItem value="high">Alta</SelectItem></SelectContent></Select></div>
                   </div>
-                  <div className="rounded-lg border bg-background/40 p-3 text-xs text-muted-foreground"><div className="flex justify-between"><span>Formato</span><span className="text-foreground">WebM · VP9</span></div><div className="mt-2 flex justify-between"><span>Tamaño estimado</span><span className="text-foreground">{analysis ? `~${formatBytes(estimatedSize)}` : "—"}</span></div><p className="mt-3 border-t pt-3 leading-5">Para CapCut estable, usa verde chroma y aplica Chroma Key. Transparente conserva alpha, pero suele exigir más memoria.</p></div>
+                  <div className="rounded-lg border bg-background/40 p-3 text-xs text-muted-foreground"><div className="flex justify-between"><span>Formato</span><span className="text-foreground">{exportEngine === "ffmpeg" ? "MP4 · H.264" : "WebM · VP9"}</span></div><div className="mt-2 flex justify-between"><span>Tamaño estimado</span><span className="text-foreground">{analysis ? `~${formatBytes(estimatedSize)}` : "—"}</span></div><p className="mt-3 border-t pt-3 leading-5">{exportEngine === "ffmpeg" ? "FFmpeg genera un MP4 con fondo verde para Chroma Key. Es experimental y no replica todos los estilos canvas." : "Para CapCut estable, usa verde chroma y aplica Chroma Key. Transparente conserva alpha, pero suele exigir más memoria."}</p></div>
                   {isExporting ? (
                     <div className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4"><div className="flex items-center justify-between text-xs"><span className="font-medium">Renderizando video</span><span>{Math.round(exportProgress)}%</span></div><Progress value={exportProgress} /><Button variant="outline" size="sm" className="w-full" onClick={() => exportAbortRef.current?.abort()}>Cancelar</Button></div>
                   ) : (
-                    <Button className="w-full gap-2 shadow-lg shadow-primary/20" disabled={!analysis || isAnalyzing} onClick={() => void beginExport()}><Download className="h-4 w-4" />Exportar overlay WebM</Button>
+                    <Button className="w-full gap-2 shadow-lg shadow-primary/20" disabled={!analysis || isAnalyzing} onClick={() => void beginExport()}><Download className="h-4 w-4" />{exportEngine === "ffmpeg" ? "Exportar MP4 FFmpeg" : "Exportar overlay WebM"}</Button>
                   )}
-                  <Button variant="outline" className="w-full gap-2" disabled={!analysis} onClick={() => void savePng()}><ImageDown className="h-4 w-4" />Guardar frame PNG</Button>
                   <p className="text-center text-[10px] leading-4 text-muted-foreground">{exportMode === "accelerated" ? "Exportación acelerada con duración sincronizada." : exportMode === "realtime" ? "Modo compatible: puede variar unos pocos fotogramas." : "Este navegador no puede exportar video."} El audio original no se incluye.</p>
                 </TabsContent>
               </CardContent>

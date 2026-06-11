@@ -2,6 +2,7 @@ import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 import { loadEnv } from "vite";
+import { createFfmpegExportMiddleware } from "./server/ffmpeg-export";
 
 const getAllowedHosts = (value: string | undefined) =>
   value
@@ -14,7 +15,15 @@ export default defineConfig(({ mode }) => {
   const allowedHosts = getAllowedHosts(process.env.SPECTRA_ALLOWED_HOSTS ?? env.SPECTRA_ALLOWED_HOSTS);
 
   return {
-    plugins: [react()],
+    plugins: [
+      react(),
+      {
+        name: "spectra-ffmpeg-export",
+        configureServer(server) {
+          server.middlewares.use(createFfmpegExportMiddleware());
+        },
+      },
+    ],
     server: {
       host: "0.0.0.0",
       port: 5173,
