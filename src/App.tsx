@@ -162,7 +162,7 @@ export function App() {
     try {
       const baseName = file.name.replace(/\.[^.]+$/, "");
       if (exportEngine === "ffmpeg") {
-        await exportWithFfmpeg(file, visualizer, exportSettings, `${baseName}-spectrum-ffmpeg.mp4`, {
+        await exportWithFfmpeg(analysis, visualizer, exportSettings, `${baseName}-spectrum-ffmpeg.mp4`, {
           signal: controller.signal,
           onProgress: (progress) => setExportProgress(progress * 100),
         });

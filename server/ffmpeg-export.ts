@@ -1,13 +1,17 @@
 import type { Connect } from "vite";
+import { createCanvas } from "@napi-rs/canvas";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, readdir, rm } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
+import { fillSpectrumFrame } from "../src/lib/audio-analysis";
+import type { AudioAnalysis, VisualizerSettings } from "../src/lib/types";
+import { renderVisualizer } from "../src/lib/visualizer-renderer";
 
-const MAX_UPLOAD_BYTES = 600 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 64 * 1024 * 1024;
 const QUALITY_CRF = { draft: 30, standard: 24, high: 18 } as const;
 const jobs = new Map<string, FfmpegJob>();
 let startupCleanupStarted = false;
@@ -18,9 +22,23 @@ export interface FfmpegExportOptions {
   height: number;
   fps: number;
   quality: keyof typeof QUALITY_CRF;
+  duration: number;
+  frames: number;
+  bands: number;
+  analysisFps: number;
+  analysisFrames: number;
+  style: VisualizerStyle;
   color: string;
   secondaryColor: string;
+  opacity: number;
+  amplitude: number;
+  cutoff: number;
+  smoothing: number;
+  thickness: number;
+  glow: number;
 }
+
+type VisualizerStyle = "bars" | "mirror" | "line" | "radial" | "dots" | "wave";
 
 interface FfmpegJob {
   id: string;
@@ -78,30 +96,29 @@ export function createFfmpegExportMiddleware(): Connect.NextHandleFunction {
   };
 }
 
-export function buildFfmpegArgs(inputPath: string, outputPath: string, options: FfmpegExportOptions) {
-  const primary = normalizeHexColor(options.color);
-  const secondary = normalizeHexColor(options.secondaryColor);
-  const filter = [
-    `[0:a]showfreqs=s=${options.width}x${options.height}:rate=${options.fps}:mode=bar:ascale=sqrt:fscale=log:colors=${primary}|${secondary},format=rgb24,split=2[base][freqsrc]`,
-    "[base]drawbox=x=0:y=0:w=iw:h=ih:color=0x00ff00:t=fill[bg]",
-    "[freqsrc]colorkey=0x000000:0.08:0.02[freq]",
-    "[bg][freq]overlay=format=auto,format=yuv420p[v]",
-  ].join(";");
+export function buildFfmpegArgs(outputPath: string, options: FfmpegExportOptions) {
+  const timelineScale = options.duration / (options.frames / options.fps);
 
   return [
     "-hide_banner",
     "-y",
-    "-i", inputPath,
-    "-filter_complex", filter,
-    "-map", "[v]",
-    "-an",
+    "-f", "rawvideo",
+    "-pixel_format", "rgba",
+    "-video_size", `${options.width}x${options.height}`,
+    "-framerate", String(options.fps),
+    "-i", "pipe:0",
+    "-vf", `settb=expr=1/1000000,setpts=PTS*${formatNumber(timelineScale, 12)},format=yuv420p`,
     "-c:v", "libx264",
+    "-bf", "0",
     "-preset", "veryfast",
     "-crf", String(QUALITY_CRF[options.quality]),
     "-movflags", "+faststart",
     "-progress", "pipe:1",
     "-nostats",
-    "-shortest",
+    "-fps_mode", "vfr",
+    "-enc_time_base", "1/1000000",
+    "-bsf:v", `setts=duration=${Math.round((options.duration / options.frames) * 1_000_000)}:time_base=1/1000000:prescale=1`,
+    "-video_track_timescale", "1000000",
     outputPath,
   ];
 }
@@ -112,14 +129,37 @@ export function parseOptions(url: string): FfmpegExportOptions {
   const height = clampNumber(params.get("height"), 16, 2160, 720);
   const fps = parseAllowedFps(params.get("fps"));
   const quality = parseQuality(params.get("quality"));
+  const duration = clampFloat(params.get("duration"), 0.001, 24 * 60 * 60, 1);
+  const bands = clampNumber(params.get("bands"), 8, 256, 64);
+  const frames = clampNumber(params.get("frames"), 1, Math.ceil(duration * fps) + 1, Math.ceil(duration * fps));
+  const analysisFps = clampFloat(params.get("analysisFps"), 1, 120, 12);
+  const analysisFrames = clampNumber(params.get("analysisFrames"), 1, Math.ceil(duration * analysisFps) + 1, Math.ceil(duration * analysisFps));
+  const style = parseStyle(params.get("style"));
   return {
     width,
     height,
     fps,
     quality,
+    duration,
+    frames,
+    bands,
+    analysisFps,
+    analysisFrames,
+    style,
     color: normalizeHexColor(params.get("color") ?? "#ffffff"),
     secondaryColor: normalizeHexColor(params.get("secondaryColor") ?? "#ffffff"),
+    opacity: clampFloat(params.get("opacity"), 0.05, 1, 0.92),
+    amplitude: clampFloat(params.get("amplitude"), 0.25, 2.5, 1.1),
+    cutoff: clampFloat(params.get("cutoff"), 0, 0.65, 0.08),
+    smoothing: clampFloat(params.get("smoothing"), 0, 1, 0.42),
+    thickness: clampFloat(params.get("thickness"), 0.15, 1, 0.62),
+    glow: clampFloat(params.get("glow"), 0, 1, 0.3),
   };
+}
+
+function parseStyle(value: string | null): VisualizerStyle {
+  if (value === "bars" || value === "mirror" || value === "line" || value === "radial" || value === "dots" || value === "wave") return value;
+  throw new RequestError(400, "El estilo solicitado no es compatible.");
 }
 
 function parseAllowedFps(value: string | null) {
@@ -135,6 +175,12 @@ function clampNumber(value: string | null, min: number, max: number, fallback: n
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
   return Math.max(min, Math.min(max, Math.round(number)));
+}
+
+function clampFloat(value: string | null, min: number, max: number, fallback: number) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, number));
 }
 
 function normalizeHexColor(value: string) {
@@ -162,11 +208,10 @@ async function cleanupOrphanWorkdirs() {
 async function startJob(request: IncomingMessage, response: ServerResponse, url: URL) {
   const options = parseOptions(url.toString());
   const workdir = await makeWorkdir();
-  const inputPath = path.join(workdir, "input.audio");
+  const inputPath = path.join(workdir, "analysis.gray");
   const outputPath = path.join(workdir, "overlay.mp4");
   try {
-    await writeRequestBody(request, inputPath);
-    const duration = await getDuration(inputPath);
+    await writeRequestBody(request, inputPath, options.analysisFrames * options.bands);
     const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
     const job: FfmpegJob = {
       id,
@@ -178,7 +223,7 @@ async function startJob(request: IncomingMessage, response: ServerResponse, url:
       progress: 0,
     };
     jobs.set(id, job);
-    runFfmpegJob(job, options, duration);
+    runFfmpegJob(job, options, options.duration);
     sendJson(response, 202, { id });
   } catch (error) {
     await rm(workdir, { recursive: true, force: true });
@@ -230,23 +275,25 @@ async function cancelJob(response: ServerResponse, id: string) {
   sendJson(response, 200, { ok: true });
 }
 
-async function writeRequestBody(request: IncomingMessage, filePath: string) {
+async function writeRequestBody(request: IncomingMessage, filePath: string, expectedBytes: number) {
   const length = Number(request.headers["content-length"] ?? 0);
-  if (length > MAX_UPLOAD_BYTES) throw new RequestError(413, "El audio es demasiado grande para este modo FFmpeg.");
+  if (length > MAX_UPLOAD_BYTES) throw new RequestError(413, "Los datos del espectro son demasiado grandes para este modo FFmpeg.");
+  if (length > 0 && length !== expectedBytes) throw new RequestError(400, "Los datos del espectro están incompletos.");
 
   let received = 0;
   request.on("data", (chunk: Buffer) => {
     received += chunk.length;
-    if (received > MAX_UPLOAD_BYTES) request.destroy(new RequestError(413, "El audio es demasiado grande para este modo FFmpeg."));
+    if (received > MAX_UPLOAD_BYTES) request.destroy(new RequestError(413, "Los datos del espectro son demasiado grandes para este modo FFmpeg."));
   });
 
   await pipeline(request, createWriteStream(filePath));
+  if (received !== expectedBytes) throw new RequestError(400, "Los datos del espectro están incompletos.");
 }
 
 function runFfmpegJob(job: FfmpegJob, options: FfmpegExportOptions, duration: number) {
-  const ffmpeg = spawn("ffmpeg", buildFfmpegArgs(job.inputPath, job.outputPath, options), {
+  const ffmpeg = spawn("ffmpeg", buildFfmpegArgs(job.outputPath, options), {
     detached: true,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["pipe", "pipe", "pipe"],
   });
   job.process = ffmpeg;
   let stderr = "";
@@ -273,6 +320,10 @@ function runFfmpegJob(job: FfmpegJob, options: FfmpegExportOptions, duration: nu
       void cleanupJob(job);
       return;
     }
+    if (job.status === "error") {
+      scheduleCleanup(job);
+      return;
+    }
     if (code === 0) {
       job.status = "complete";
       job.progress = 1;
@@ -282,24 +333,78 @@ function runFfmpegJob(job: FfmpegJob, options: FfmpegExportOptions, duration: nu
     }
     scheduleCleanup(job);
   });
+
+  void renderFramesToFfmpeg(job, options, ffmpeg).catch((error) => {
+    if (job.status !== "running") return;
+    job.status = "error";
+    job.error = error instanceof Error ? error.message : "No se pudieron renderizar los fotogramas.";
+    ffmpeg.stdin.destroy();
+    terminateProcess(job, "SIGTERM");
+  });
 }
 
-async function getDuration(inputPath: string) {
-  return new Promise<number>((resolve) => {
-    const ffprobe = spawn("ffprobe", [
-      "-v", "error",
-      "-show_entries", "format=duration",
-      "-of", "default=noprint_wrappers=1:nokey=1",
-      inputPath,
-    ]);
-    let stdout = "";
-    ffprobe.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
-    ffprobe.on("close", () => {
-      const duration = Number(stdout.trim());
-      resolve(Number.isFinite(duration) && duration > 0 ? duration : 1);
-    });
-    ffprobe.on("error", () => resolve(1));
+async function renderFramesToFfmpeg(job: FfmpegJob, options: FfmpegExportOptions, ffmpeg: ChildProcess) {
+  if (!ffmpeg.stdin) throw new Error("FFmpeg no abrió el canal de video.");
+  const frames = new Uint8Array(await readFile(job.inputPath));
+  const analysis: AudioAnalysis = {
+    duration: options.duration,
+    frameRate: options.analysisFps,
+    bands: options.bands,
+    frames,
+    peaks: new Uint8Array(options.analysisFrames),
+  };
+  const visualizer: VisualizerSettings = {
+    style: options.style,
+    color: colorToCss(options.color),
+    secondaryColor: colorToCss(options.secondaryColor),
+    opacity: options.opacity,
+    amplitude: options.amplitude,
+    cutoff: options.cutoff,
+    smoothing: options.smoothing,
+    thickness: options.thickness,
+    glow: options.glow,
+    background: "chroma",
+  };
+  const canvas = createCanvas(options.width, options.height);
+  const context = canvas.getContext("2d");
+  const spectrum = new Float32Array(options.bands);
+  const preparedSpectrum = new Float32Array(options.bands);
+
+  for (let frameIndex = 0; frameIndex < options.frames; frameIndex += 1) {
+    if (job.status !== "running") return;
+    const time = frameIndex / options.fps;
+    fillSpectrumFrame(analysis, time, spectrum);
+    renderVisualizer(
+      context as unknown as CanvasRenderingContext2D,
+      spectrum,
+      visualizer,
+      { width: options.width, height: options.height, time, preparedSpectrum },
+    );
+    if (!ffmpeg.stdin.write(canvas.data())) await waitForDrain(ffmpeg);
+    if (frameIndex % 4 === 0) await yieldToEventLoop();
+  }
+  ffmpeg.stdin.end();
+}
+
+function waitForDrain(ffmpeg: ChildProcess) {
+  return new Promise<void>((resolve, reject) => {
+    if (!ffmpeg.stdin) {
+      reject(new Error("FFmpeg cerró el canal de video."));
+      return;
+    }
+    const cleanup = () => {
+      ffmpeg.stdin?.off("drain", onDrain);
+      ffmpeg.stdin?.off("error", onError);
+    };
+    const onDrain = () => { cleanup(); resolve(); };
+    const onError = (error: Error) => { cleanup(); reject(error); };
+    ffmpeg.stdin.once("drain", onDrain);
+    ffmpeg.stdin.once("error", onError);
   });
+}
+
+function yieldToEventLoop() {
+  return new Promise<void>((resolve) => setImmediate(resolve));
 }
 
 function updateJobProgress(job: FfmpegJob, line: string, duration: number) {
@@ -308,6 +413,14 @@ function updateJobProgress(job: FfmpegJob, line: string, duration: number) {
   const microseconds = Number(value);
   if (!Number.isFinite(microseconds)) return;
   job.progress = Math.max(job.progress, Math.min(0.99, microseconds / 1_000_000 / duration));
+}
+
+function colorToCss(value: string) {
+  return `#${normalizeHexColor(value).slice(2)}`;
+}
+
+function formatNumber(value: number, precision = 6) {
+  return Number(value.toFixed(precision)).toString();
 }
 
 function sendJson(response: ServerResponse, statusCode: number, body: unknown) {

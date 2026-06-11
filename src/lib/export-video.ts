@@ -107,8 +107,6 @@ async function exportWithWebCodecs(
   const spectrum = new Float32Array(analysis.bands);
   const preparedSpectrum = new Float32Array(analysis.bands);
   const schedule = createFrameSchedule(analysis.duration, settings.fps);
-  const nominalFrameDuration = Math.round(1_000_000 / settings.fps);
-
   try {
     for (let frameIndex = 0; frameIndex < schedule.timestamps.length; frameIndex += 1) {
       if (callbacks.signal?.aborted) throw new DOMException("Exportación cancelada", "AbortError");
@@ -143,7 +141,7 @@ async function exportWithWebCodecs(
     // An endpoint frame prevents the file from ending one frame before the audio.
     const endpointFrame = new VideoFrame(canvas, {
       timestamp: schedule.endTimestamp,
-      duration: nominalFrameDuration,
+      duration: 1,
       alpha: keepAlpha ? "keep" : "discard",
     });
     encoder.encode(endpointFrame, { keyFrame: true });

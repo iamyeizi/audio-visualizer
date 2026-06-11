@@ -1,4 +1,4 @@
-import type { ExportSettings, VisualizerSettings } from "./types";
+import type { AudioAnalysis, ExportSettings, VisualizerSettings } from "./types";
 
 interface ExportFfmpegCallbacks {
   onProgress: (value: number) => void;
@@ -6,7 +6,7 @@ interface ExportFfmpegCallbacks {
 }
 
 export async function exportWithFfmpeg(
-  file: File,
+  analysis: AudioAnalysis,
   visualizer: VisualizerSettings,
   settings: ExportSettings,
   fileName: string,
@@ -18,21 +18,34 @@ export async function exportWithFfmpeg(
   };
   callbacks.signal?.addEventListener("abort", abort, { once: true });
 
+  const spectrum = createFfmpegSpectrumPayload(analysis, visualizer, settings);
   const params = new URLSearchParams({
     width: String(settings.width),
     height: String(settings.height),
     fps: String(settings.fps),
     quality: settings.quality,
+    duration: String(analysis.duration),
+    frames: String(spectrum.frameCount),
+    bands: String(analysis.bands),
+    analysisFps: String(analysis.frameRate),
+    analysisFrames: String(spectrum.analysisFrameCount),
+    style: visualizer.style,
     color: visualizer.color,
     secondaryColor: visualizer.secondaryColor,
+    opacity: String(visualizer.opacity),
+    amplitude: String(visualizer.amplitude),
+    cutoff: String(visualizer.cutoff),
+    smoothing: String(visualizer.smoothing),
+    thickness: String(visualizer.thickness),
+    glow: String(visualizer.glow),
   });
 
   try {
     callbacks.onProgress(0.02);
     const startResponse = await fetch(`/api/export-ffmpeg/start?${params}`, {
       method: "POST",
-      body: file,
-      headers: { "Content-Type": file.type || "application/octet-stream" },
+      body: new Uint8Array(spectrum.bytes).buffer,
+      headers: { "Content-Type": "application/octet-stream" },
       signal: callbacks.signal,
     });
     if (!startResponse.ok) throw new Error(await startResponse.text() || "No se pudo iniciar FFmpeg.");
@@ -60,6 +73,20 @@ export async function exportWithFfmpeg(
   } finally {
     callbacks.signal?.removeEventListener("abort", abort);
   }
+}
+
+export function createFfmpegSpectrumPayload(
+  analysis: AudioAnalysis,
+  visualizer: VisualizerSettings,
+  settings: ExportSettings,
+) {
+  const frameCount = Math.max(1, Math.ceil(analysis.duration * settings.fps));
+  void visualizer;
+  return {
+    bytes: analysis.frames,
+    frameCount,
+    analysisFrameCount: Math.max(1, Math.floor(analysis.frames.length / analysis.bands)),
+  };
 }
 
 function downloadBlob(blob: Blob, fileName: string) {

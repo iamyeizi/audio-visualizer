@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFrameSchedule, estimateExportSize, getExportMode } from "./export-video";
+import { createFfmpegSpectrumPayload } from "./export-ffmpeg";
 
 const secureContextDescriptor = Object.getOwnPropertyDescriptor(window, "isSecureContext");
 
@@ -41,5 +42,37 @@ describe("estimateExportSize", () => {
     Object.defineProperty(HTMLCanvasElement.prototype, "captureStream", { configurable: true, value: vi.fn() });
     vi.stubGlobal("MediaRecorder", class { static isTypeSupported() { return true; } });
     expect(getExportMode()).toBe("realtime");
+  });
+});
+
+describe("createFfmpegSpectrumPayload", () => {
+  it("sends the original compact analysis so the shared renderer applies settings", () => {
+    const analysis = {
+      duration: 0.1,
+      frameRate: 12,
+      bands: 2,
+      frames: new Uint8Array([64, 192, 64, 192]),
+      peaks: new Uint8Array([0, 0]),
+    };
+    const payload = createFfmpegSpectrumPayload(
+      analysis,
+      {
+        style: "bars",
+        color: "#ffffff",
+        secondaryColor: "#ffffff",
+        opacity: 0.92,
+        amplitude: 0.7,
+        cutoff: 0.5,
+        smoothing: 0,
+        thickness: 0.41,
+        glow: 0.3,
+        background: "chroma",
+      },
+      { width: 1920, height: 1080, fps: 30, quality: "standard" },
+    );
+
+    expect(payload.frameCount).toBe(3);
+    expect(payload.analysisFrameCount).toBe(2);
+    expect(payload.bytes).toBe(analysis.frames);
   });
 });

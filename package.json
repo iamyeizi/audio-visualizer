@@ -13,6 +13,7 @@
     "lint": "tsc -b --pretty false"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^1.0.0",
     "@radix-ui/react-label": "latest",
     "@radix-ui/react-progress": "latest",
     "@radix-ui/react-select": "latest",
