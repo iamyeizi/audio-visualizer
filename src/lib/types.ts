@@ -8,7 +8,7 @@ export const VISUALIZER_STYLES = [
 ] as const;
 
 export type VisualizerStyle = (typeof VISUALIZER_STYLES)[number]["id"];
-export type BackgroundMode = "transparent" | "black" | "chroma";
+export type BackgroundMode = "black" | "chroma";
 
 export interface AudioAnalysis {
   duration: number;

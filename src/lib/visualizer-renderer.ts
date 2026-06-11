@@ -72,7 +72,6 @@ export function prepareSpectrumInto(
 }
 
 function drawBackground(context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, mode: VisualizerSettings["background"], width: number, height: number) {
-  if (mode === "transparent") return;
   context.fillStyle = mode === "chroma" ? "#00ff00" : "#000000";
   context.fillRect(0, 0, width, height);
 }

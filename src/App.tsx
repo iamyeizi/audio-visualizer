@@ -22,7 +22,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToastViewport, type ToastMessage, type ToastVariant } from "@/components/ui/toast";
 import { PreviewCanvas } from "@/components/preview-canvas";
 import { analyzeAudioFile } from "@/lib/audio-analysis";
-import { exportWithFfmpeg } from "@/lib/export-ffmpeg";
 import { estimateExportSize, exportWebM } from "@/lib/export-video";
 import {
   DEFAULT_EXPORT_SETTINGS,
@@ -43,8 +42,6 @@ const RESOLUTIONS = [
   { value: "3840x2160", label: "4K · 3840 × 2160" },
 ];
 
-type ExportEngine = "browser" | "ffmpeg";
-
 export function App() {
   const [file, setFile] = useState<File | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -59,7 +56,6 @@ export function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
-  const [exportEngine, setExportEngine] = useState<ExportEngine>("browser");
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const audioRef = useRef<HTMLAudioElement>(null);
   const analysisAbortRef = useRef<AbortController | null>(null);
@@ -161,15 +157,6 @@ export function App() {
     setExportProgress(0);
     try {
       const baseName = file.name.replace(/\.[^.]+$/, "");
-      if (exportEngine === "ffmpeg") {
-        await exportWithFfmpeg(analysis, visualizer, exportSettings, `${baseName}-spectrum-ffmpeg.mp4`, {
-          signal: controller.signal,
-          onProgress: (progress) => setExportProgress(progress * 100),
-        });
-        notify("success", "Exportación terminada", `${baseName}-spectrum-ffmpeg.mp4 está listo.`);
-        return;
-      }
-
       await exportWebM(analysis, visualizer, exportSettings, `${baseName}-spectrum.webm`, {
         signal: controller.signal,
         onProgress: (progress) => setExportProgress(progress * 100),
@@ -180,7 +167,7 @@ export function App() {
               "Modo compatible activado",
               window.isSecureContext
                 ? "WebCodecs no está disponible en este equipo. El video se renderizará en tiempo real."
-                : "Esta dirección HTTP no es un contexto seguro. El video se renderizará en tiempo real y el fondo transparente se sustituirá por chroma key.",
+                : "Esta dirección HTTP no es un contexto seguro. El video se renderizará en tiempo real.",
             );
           }
         },
@@ -307,14 +294,14 @@ export function App() {
                 </TabsContent>
 
                 <TabsContent value="export" className="space-y-5">
-                  <div className="space-y-2"><Label>Motor</Label><Select value={exportEngine} onValueChange={(value) => { const engine = value as ExportEngine; setExportEngine(engine); if (engine === "ffmpeg") updateVisualizer("background", "chroma"); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="browser">Navegador · WebM</SelectItem><SelectItem value="ffmpeg">FFmpeg · MP4</SelectItem></SelectContent></Select></div>
-                  <div className="space-y-2"><Label>Fondo</Label>{exportEngine === "ffmpeg" ? <Select value="chroma" disabled><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="chroma">Verde</SelectItem></SelectContent></Select> : <Select value={visualizer.background} onValueChange={(value) => updateVisualizer("background", value as VisualizerSettings["background"])}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="chroma">Verde</SelectItem><SelectItem value="transparent">Transparente</SelectItem><SelectItem value="black">Negro</SelectItem></SelectContent></Select>}</div>
+                  <div className="space-y-2"><Label>Motor</Label><Select value="browser" disabled><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="browser">Navegador · WebM</SelectItem></SelectContent></Select></div>
+                  <div className="space-y-2"><Label>Fondo</Label><Select value={visualizer.background} onValueChange={(value) => updateVisualizer("background", value as VisualizerSettings["background"])}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="chroma">Verde</SelectItem><SelectItem value="black">Negro</SelectItem></SelectContent></Select></div>
                   <div className="space-y-2"><Label>Resolución</Label><Select value={`${exportSettings.width}x${exportSettings.height}`} onValueChange={(value) => { const [width, height] = value.split("x").map(Number); setExportSettings((current) => ({ ...current, width, height })); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{RESOLUTIONS.map((resolution) => <SelectItem key={resolution.value} value={resolution.value}>{resolution.label}</SelectItem>)}</SelectContent></Select></div>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-2"><Label>Fotogramas</Label><Select value={String(exportSettings.fps)} onValueChange={(value) => setExportSettings((current) => ({ ...current, fps: Number(value) }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="24">24 fps</SelectItem><SelectItem value="25">25 fps</SelectItem><SelectItem value="30">30 fps</SelectItem><SelectItem value="48">48 fps</SelectItem><SelectItem value="50">50 fps</SelectItem><SelectItem value="60">60 fps</SelectItem></SelectContent></Select></div>
                     <div className="space-y-2"><Label>Calidad</Label><Select value={exportSettings.quality} onValueChange={(value) => setExportSettings((current) => ({ ...current, quality: value as ExportSettings["quality"] }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="draft">Borrador</SelectItem><SelectItem value="standard">Estándar</SelectItem><SelectItem value="high">Alta</SelectItem></SelectContent></Select></div>
                   </div>
-                  <div className="rounded-lg border bg-background/40 p-3 text-xs text-muted-foreground"><div className="flex justify-between"><span>Formato</span><span className="text-foreground">{exportEngine === "ffmpeg" ? "MP4 · H.264" : "WebM · VP9"}</span></div><div className="mt-2 flex justify-between"><span>Tamaño estimado</span><span className="text-foreground">{analysis ? `~${formatBytes(estimatedSize)}` : "—"}</span></div></div>
+                  <div className="rounded-lg border bg-background/40 p-3 text-xs text-muted-foreground"><div className="flex justify-between"><span>Formato</span><span className="text-foreground">WebM · VP9</span></div><div className="mt-2 flex justify-between"><span>Tamaño estimado</span><span className="text-foreground">{analysis ? `~${formatBytes(estimatedSize)}` : "—"}</span></div></div>
                   {isExporting ? (
                     <div className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4"><div className="flex items-center justify-between text-xs"><span className="font-medium">Renderizando video</span><span>{Math.round(exportProgress)}%</span></div><Progress value={exportProgress} /><Button variant="outline" size="sm" className="w-full" onClick={() => exportAbortRef.current?.abort()}>Cancelar</Button></div>
                   ) : (

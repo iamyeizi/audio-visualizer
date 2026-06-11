@@ -42,7 +42,6 @@ async function exportWithWebCodecs(request: Extract<WorkerRequest, { type: "star
     frames: new Uint8Array(request.analysis.frames),
     peaks: new Uint8Array(0),
   };
-  const keepAlpha = request.visualizer.background === "transparent";
   const writable = request.fileHandle ? await request.fileHandle.createWritable() : null;
   const target = writable ? new FileSystemWritableFileStreamTarget(writable) : new ArrayBufferTarget();
   const muxer = new Muxer({
@@ -52,7 +51,7 @@ async function exportWithWebCodecs(request: Extract<WorkerRequest, { type: "star
       width: request.settings.width,
       height: request.settings.height,
       frameRate: request.settings.fps,
-      alpha: keepAlpha,
+      alpha: false,
     },
   });
 
@@ -65,7 +64,7 @@ async function exportWithWebCodecs(request: Extract<WorkerRequest, { type: "star
 
   try {
     const canvas = new OffscreenCanvas(request.settings.width, request.settings.height);
-    const context = canvas.getContext("2d", { alpha: keepAlpha });
+    const context = canvas.getContext("2d", { alpha: false });
     if (!context) throw new Error("No se pudo crear el lienzo de exportación.");
 
     const spectrum = new Float32Array(analysis.bands);
@@ -93,7 +92,7 @@ async function exportWithWebCodecs(request: Extract<WorkerRequest, { type: "star
       const frame = new VideoFrame(canvas, {
         timestamp,
         duration: Math.max(1, nextTimestamp - timestamp),
-        alpha: keepAlpha ? "keep" : "discard",
+        alpha: "discard",
       });
       encoder.encode(frame, { keyFrame: frameIndex % (request.settings.fps * 4) === 0 });
       frame.close();
@@ -108,7 +107,7 @@ async function exportWithWebCodecs(request: Extract<WorkerRequest, { type: "star
     const endpointFrame = new VideoFrame(canvas, {
       timestamp: schedule.endTimestamp,
       duration: 1,
-      alpha: keepAlpha ? "keep" : "discard",
+      alpha: "discard",
     });
     encoder.encode(endpointFrame, { keyFrame: true });
     endpointFrame.close();

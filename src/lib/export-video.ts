@@ -65,14 +65,13 @@ async function exportWithWebCodecs(
   callbacks: ExportCallbacks,
   fileHandle: FileSystemFileHandle | null,
 ) {
-  const keepAlpha = visualizer.background === "transparent";
   const config: VideoEncoderConfig = {
     codec: "vp09.00.10.08",
     width: settings.width,
     height: settings.height,
     framerate: settings.fps,
     bitrate: getBitrate(settings),
-    alpha: keepAlpha ? "keep" : "discard",
+    alpha: "discard",
     latencyMode: "quality",
   };
   const support = await VideoEncoder.isConfigSupported(config);
@@ -195,11 +194,10 @@ async function exportWithMediaRecorder(
   callbacks: ExportCallbacks,
   fileHandle: FileSystemFileHandle | null,
 ) {
-  const keepAlpha = false;
   const canvas = document.createElement("canvas");
   canvas.width = settings.width;
   canvas.height = settings.height;
-  const context = canvas.getContext("2d", { alpha: keepAlpha });
+  const context = canvas.getContext("2d", { alpha: false });
   if (!context) throw new Error("No se pudo crear el lienzo de exportación compatible.");
 
   const mimeType = getRecorderMimeType();
@@ -211,9 +209,6 @@ async function exportWithMediaRecorder(
   let writeQueue = Promise.resolve();
   const spectrum = new Float32Array(analysis.bands);
   const preparedSpectrum = new Float32Array(analysis.bands);
-  const fallbackSettings = visualizer.background === "transparent"
-    ? { ...visualizer, background: "chroma" as const }
-    : visualizer;
 
   recorder.ondataavailable = (event) => {
     if (!event.data.size) return;
@@ -240,7 +235,7 @@ async function exportWithMediaRecorder(
       const draw = (now: number) => {
         const time = Math.min(analysis.duration, (now - startedAt) / 1000);
         fillSpectrumFrame(analysis, time, spectrum);
-        renderVisualizer(context, spectrum, fallbackSettings, {
+        renderVisualizer(context, spectrum, visualizer, {
           width: settings.width,
           height: settings.height,
           time,
