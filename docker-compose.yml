@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     ports:
-      - "8081:5173"
+      - "127.0.0.1:8081:5173"
     environment:
       CHOKIDAR_USEPOLLING: "true"
       SPECTRA_ALLOWED_HOSTS: "${SPECTRA_ALLOWED_HOSTS:-.ts.net}"
