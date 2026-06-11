@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { estimateExportSize, getExportMode } from "./export-video";
+import { createFrameSchedule, estimateExportSize, getExportMode } from "./export-video";
 
 const secureContextDescriptor = Object.getOwnPropertyDescriptor(window, "isSecureContext");
 
@@ -14,6 +14,19 @@ describe("estimateExportSize", () => {
   it("scales with duration", () => {
     const settings = { width: 1920, height: 1080, fps: 30, quality: "standard" as const };
     expect(estimateExportSize(settings, 120)).toBe(estimateExportSize(settings, 60) * 2);
+  });
+
+  it("ends the accelerated frame schedule at the exact audio duration", () => {
+    const schedule = createFrameSchedule(3_600.123, 30);
+    expect(schedule.endTimestamp).toBe(3_600_123_000);
+    expect(schedule.timestamps.at(-1)).toBeLessThan(schedule.endTimestamp);
+    expect(schedule.endTimestamp - (schedule.timestamps.at(-1) ?? 0)).toBeLessThanOrEqual(33_334);
+  });
+
+  it("uses absolute timestamps without accumulating frame rounding drift", () => {
+    const schedule = createFrameSchedule(3_600, 30);
+    expect(schedule.timestamps[108_000 - 1]).toBe(Math.round((107_999 / 30) * 1_000_000));
+    expect(schedule.endTimestamp).toBe(3_600_000_000);
   });
 
   it("selects accelerated export in a secure WebCodecs context", () => {

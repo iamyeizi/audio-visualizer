@@ -60,3 +60,5 @@ La versión de producción compila los assets y los sirve con Nginx en `http://l
 El análisis reduce el audio a 12 kHz y se ejecuta en un Web Worker. La exportación se codifica más rápido que tiempo real cuando el hardware lo permite. El tiempo final depende de resolución, fps, estilo y GPU. Chrome y Edge ofrecen el flujo más completo; otros navegadores pueden reproducir y previsualizar, pero no siempre exponen `VideoEncoder` o guardado directo a disco.
 
 WebCodecs requiere un contexto seguro. `http://localhost:8081` se considera seguro en Chrome. Si se abre la aplicación mediante una IP de red como `http://192.168.x.x:8081`, la app cambia automáticamente a `MediaRecorder`: renderiza en tiempo real y utiliza chroma key cuando se había elegido transparencia.
+
+La exportación WebCodecs genera timestamps absolutos y fija el final del contenedor en la duración decodificada del audio. El fallback `MediaRecorder` depende del reloj real y puede variar unos pocos fotogramas; para sincronización precisa se recomienda abrir la app mediante `localhost`.

@@ -18,6 +18,17 @@ export function estimateExportSize(settings: ExportSettings, duration: number) {
   return (bitrate * duration) / 8;
 }
 
+export function createFrameSchedule(duration: number, fps: number) {
+  const safeDuration = Math.max(0, duration);
+  const totalFrames = Math.max(1, Math.ceil(safeDuration * fps));
+  const timestamps = Array.from(
+    { length: totalFrames },
+    (_, frameIndex) => Math.round((frameIndex / fps) * 1_000_000),
+  );
+  const endTimestamp = Math.max(1, Math.round(safeDuration * 1_000_000));
+  return { timestamps, endTimestamp };
+}
+
 export async function exportWebM(
   analysis: AudioAnalysis,
   visualizer: VisualizerSettings,
@@ -92,11 +103,11 @@ async function exportWithWebCodecs(
   const context = canvas.getContext("2d", { alpha: true });
   if (!context) throw new Error("No se pudo crear el lienzo de exportación.");
   const spectrum = new Float32Array(analysis.bands);
-  const totalFrames = Math.max(1, Math.ceil(analysis.duration * settings.fps));
-  const frameDuration = Math.round(1_000_000 / settings.fps);
+  const schedule = createFrameSchedule(analysis.duration, settings.fps);
+  const nominalFrameDuration = Math.round(1_000_000 / settings.fps);
 
   try {
-    for (let frameIndex = 0; frameIndex < totalFrames; frameIndex += 1) {
+    for (let frameIndex = 0; frameIndex < schedule.timestamps.length; frameIndex += 1) {
       if (callbacks.signal?.aborted) throw new DOMException("Exportación cancelada", "AbortError");
       if (encoderError) throw encoderError;
       while (encoder.encodeQueueSize > 8) await sleep(4);
@@ -104,15 +115,31 @@ async function exportWithWebCodecs(
       const time = frameIndex / settings.fps;
       fillSpectrumFrame(analysis, time, spectrum);
       renderVisualizer(context, spectrum, visualizer, { width: settings.width, height: settings.height, time });
-      const frame = new VideoFrame(canvas, { timestamp: frameIndex * frameDuration, duration: frameDuration, alpha: "keep" });
+      const timestamp = schedule.timestamps[frameIndex];
+      const nextTimestamp = schedule.timestamps[frameIndex + 1] ?? schedule.endTimestamp;
+      const frame = new VideoFrame(canvas, {
+        timestamp,
+        duration: Math.max(1, nextTimestamp - timestamp),
+        alpha: "keep",
+      });
       encoder.encode(frame, { keyFrame: frameIndex % (settings.fps * 4) === 0 });
       frame.close();
 
       if (frameIndex % settings.fps === 0) {
-        callbacks.onProgress(frameIndex / totalFrames);
+        callbacks.onProgress(frameIndex / schedule.timestamps.length);
         await sleep(0);
       }
     }
+
+    // webm-muxer derives the container duration from the last chunk timestamp.
+    // An endpoint frame prevents the file from ending one frame before the audio.
+    const endpointFrame = new VideoFrame(canvas, {
+      timestamp: schedule.endTimestamp,
+      duration: nominalFrameDuration,
+      alpha: "keep",
+    });
+    encoder.encode(endpointFrame, { keyFrame: true });
+    endpointFrame.close();
     await encoder.flush();
     muxer.finalize();
     callbacks.onProgress(1);

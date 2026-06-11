@@ -320,7 +320,7 @@ export function App() {
                     <Button className="w-full gap-2 shadow-lg shadow-primary/20" disabled={!analysis || isAnalyzing} onClick={() => void beginExport()}><Download className="h-4 w-4" />Exportar overlay WebM</Button>
                   )}
                   <Button variant="outline" className="w-full gap-2" disabled={!analysis} onClick={() => void savePng()}><ImageDown className="h-4 w-4" />Guardar frame PNG</Button>
-                  <p className="text-center text-[10px] leading-4 text-muted-foreground">{exportMode === "accelerated" ? "Exportación acelerada disponible." : exportMode === "realtime" ? "Modo compatible disponible: renderiza en tiempo real." : "Este navegador no puede exportar video."} El audio original no se incluye.</p>
+                  <p className="text-center text-[10px] leading-4 text-muted-foreground">{exportMode === "accelerated" ? "Exportación acelerada con duración sincronizada." : exportMode === "realtime" ? "Modo compatible: puede variar unos pocos fotogramas." : "Este navegador no puede exportar video."} El audio original no se incluye.</p>
                 </TabsContent>
               </CardContent>
             </Tabs>
