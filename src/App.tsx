@@ -273,7 +273,7 @@ export function App() {
               </Card>
 
               <Card className="glass">
-                <CardHeader className="pb-4"><CardTitle className="text-sm">Estilo del espectro</CardTitle><CardDescription>Elige una composición. Todos los ajustes se conservan.</CardDescription></CardHeader>
+                <CardHeader className="pb-4"><CardTitle className="text-sm">Estilo del espectro</CardTitle></CardHeader>
                 <CardContent className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                   {VISUALIZER_STYLES.map((style) => (
                     <button key={style.id} type="button" onClick={() => updateVisualizer("style", style.id)} className={cn("relative rounded-lg border p-3 text-left transition-colors hover:bg-accent", visualizer.style === style.id && "border-primary bg-primary/5")}>
