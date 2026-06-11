@@ -6,13 +6,13 @@ describe("App", () => {
   it("renders the private audio upload workspace", () => {
     render(<App />);
     expect(screen.getByText("Spectra Studio")).toBeInTheDocument();
-    expect(screen.getByText(/Convierte tu audio/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Seleccionar audio")).toHaveAttribute("type", "file");
+    expect(screen.getByText(/Genera un espectro/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Seleccionar archivo")).toHaveAttribute("type", "file");
   });
 
   it("shows persistent dismissible errors as toasts", async () => {
     render(<App />);
-    const input = screen.getByLabelText("Seleccionar audio");
+    const input = screen.getByLabelText("Seleccionar archivo");
     fireEvent.change(input, { target: { files: [new File(["text"], "notes.txt", { type: "text/plain" })] } });
 
     expect(await screen.findByText("Formato no compatible")).toBeInTheDocument();

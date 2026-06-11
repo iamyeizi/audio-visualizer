@@ -1,6 +1,6 @@
 # Spectra Studio
 
-Web app client-side para convertir audio en overlays de espectro destinados a editores como CapCut. El audio no se sube a un servidor.
+Web app para convertir audio en overlays de espectro destinados a editores como CapCut. El audio no se sube a un servidor; el modo FFmpeg envía únicamente el análisis compacto del espectro.
 
 ## Funciones
 
@@ -9,7 +9,7 @@ Web app client-side para convertir audio en overlays de espectro destinados a ed
 - Color doble, opacidad, amplitud, cut, suavizado, grosor y brillo.
 - Preview sincronizado con reproducción y búsqueda.
 - Exportación WebM VP9 acelerada, sin audio, a 24/25/30/48/50/60 fps.
-- Exportación experimental MP4/H.264 con FFmpeg en el contenedor dev para Chroma Key.
+- Exportación MP4/H.264 de los seis estilos con FFmpeg en el contenedor dev para Chroma Key.
 - Fondo transparente, negro o verde chroma.
 - Resoluciones SD, HD, Full HD, vertical, cuadrada y 4K.
 - Escritura directa a disco con File System Access API para no guardar videos largos completos en RAM.
@@ -58,12 +58,12 @@ La versión de producción compila los assets y los sirve con Nginx en `http://l
 
 ## Consideraciones para audios de una hora
 
-El análisis reduce el audio a 12 kHz y se ejecuta en un Web Worker. La exportación se codifica más rápido que tiempo real cuando el hardware lo permite. El tiempo final depende de resolución, fps, estilo y GPU. Para audios largos conviene empezar con `854 × 480`, `24 fps`, calidad `Borrador` o `Estándar`, y fondo `Verde chroma`.
+El análisis reduce el audio a 12 kHz y se ejecuta en un Web Worker. WebCodecs puede codificar más rápido que tiempo real cuando el hardware lo permite; FFmpeg vuelve a dibujar el canvas en CPU para conservar la paridad visual y puede tardar más en Full HD. El tiempo final depende de resolución, fps, estilo y equipo. Para audios largos conviene empezar con `854 × 480`, `24 fps`, calidad `Borrador` o `Estándar`, y fondo `Verde chroma`.
 
 Chrome y Edge ofrecen el flujo más completo; otros navegadores pueden reproducir y previsualizar, pero no siempre exponen `VideoEncoder` o guardado directo a disco.
 
 WebCodecs requiere un contexto seguro. `http://localhost:8081` se considera seguro en Chrome. Si se abre la aplicación mediante una IP de red como `http://192.168.x.x:8081`, la app cambia automáticamente a `MediaRecorder`: renderiza en tiempo real y utiliza chroma key cuando se había elegido transparencia.
 
-La exportación WebCodecs genera timestamps absolutos y fija el final del contenedor en la duración decodificada del audio. El fallback `MediaRecorder` depende del reloj real y puede variar unos pocos fotogramas; para sincronización precisa se recomienda abrir la app mediante `localhost`.
+La exportación WebCodecs genera timestamps absolutos y fija el final del contenedor en la duración decodificada del audio. FFmpeg usa una escala de tiempo de microsegundos y ajusta la duración del último paquete al mismo valor. El fallback `MediaRecorder` depende del reloj real y puede variar unos pocos fotogramas; para sincronización precisa se recomienda abrir la app mediante `localhost`.
 
-El modo `FFmpeg · MP4 chroma` solo está disponible en desarrollo mediante Docker. Recibe el audio en `/api/export-ffmpeg`, genera un espectro con filtros nativos de FFmpeg y devuelve un MP4/H.264 con fondo verde para aplicar Chroma Key en CapCut. MP4/H.264 no conserva transparencia; para alpha real se usa el motor `Navegador · WebM`. Es una ruta de prueba para audios largos y no replica todos los estilos del render canvas.
+El modo `FFmpeg · MP4 chroma` solo está disponible en desarrollo mediante Docker. Recibe el análisis compacto de 64 bandas y ejecuta en el servidor el mismo `renderVisualizer` que usa el preview y el motor WebM. Barras, Espejo, Línea, Radial, Puntos y Onda comparten geometría, color, opacidad, amplitud, cut, suavizado, grosor y brillo en ambos motores. FFmpeg codifica esos fotogramas como MP4/H.264 con fondo verde para aplicar Chroma Key en CapCut; MP4/H.264 no conserva transparencia.
