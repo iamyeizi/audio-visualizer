@@ -240,10 +240,10 @@ export function App() {
                   {isDragging && <div className="absolute inset-0 animate-drop-ring rounded-2xl border-2 border-primary" />}
                   <div className={cn("relative flex h-20 w-20 items-center justify-center rounded-2xl border bg-card shadow-2xl transition-colors", isDragging && "animate-drop-float border-primary bg-primary text-primary-foreground")}><Upload className={cn("h-8 w-8 text-primary transition-colors", isDragging && "text-primary-foreground")} /></div>
                 </div>
-                <h1 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">Convierte tu audio en un espectro listo para video</h1>
-                <p className={cn("mt-4 max-w-md text-sm leading-6 text-muted-foreground transition-colors", isDragging && "font-medium text-primary")}>{isDragging ? "Suelta el audio para comenzar" : "Arrastra un WAV, MP3 u otro audio compatible. El archivo se procesa en este dispositivo y nunca se sube."}</p>
+                <h1 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">Genera un espectro desde un archivo de audio</h1>
+                <p className={cn("mt-4 max-w-md text-sm leading-6 text-muted-foreground transition-colors", isDragging && "font-medium text-primary")}>{isDragging ? "Suelta el audio para comenzar" : "Arrastra un archivo WAV, MP3 u otro formato compatible."}</p>
                 <Button asChild className="mt-7 gap-2 shadow-lg shadow-primary/20">
-                  <label className="cursor-pointer"><FileAudio className="h-4 w-4" />Seleccionar audio<input type="file" accept="audio/*,.wav,.mp3,.m4a,.aac,.ogg,.oga,.flac,.opus" className="sr-only" onChange={(event) => { const selected = event.target.files?.[0]; if (selected) void loadFile(selected); }} /></label>
+                  <label className="cursor-pointer"><FileAudio className="h-4 w-4" />Seleccionar archivo<input type="file" accept="audio/*,.wav,.mp3,.m4a,.aac,.ogg,.oga,.flac,.opus" className="sr-only" onChange={(event) => { const selected = event.target.files?.[0]; if (selected) void loadFile(selected); }} /></label>
                 </Button>
               </CardContent>
             </Card>
@@ -320,7 +320,7 @@ export function App() {
                   {isExporting ? (
                     <div className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4"><div className="flex items-center justify-between text-xs"><span className="font-medium">Renderizando video</span><span>{Math.round(exportProgress)}%</span></div><Progress value={exportProgress} /><Button variant="outline" size="sm" className="w-full" onClick={() => exportAbortRef.current?.abort()}>Cancelar</Button></div>
                   ) : (
-                    <Button className="w-full gap-2 shadow-lg shadow-primary/20" disabled={!analysis || isAnalyzing} onClick={() => void beginExport()}><Download className="h-4 w-4" />{exportEngine === "ffmpeg" ? "Exportar MP4 FFmpeg" : "Exportar overlay WebM"}</Button>
+                    <Button className="w-full gap-2 shadow-lg shadow-primary/20" disabled={!analysis || isAnalyzing} onClick={() => void beginExport()}><Download className="h-4 w-4" />Exportar</Button>
                   )}
                 </TabsContent>
               </CardContent>
