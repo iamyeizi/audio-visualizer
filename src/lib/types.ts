@@ -48,7 +48,7 @@ export const DEFAULT_VISUALIZER_SETTINGS: VisualizerSettings = {
   smoothing: 0.42,
   thickness: 0.62,
   glow: 0.3,
-  background: "transparent",
+  background: "chroma",
 };
 
 export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {

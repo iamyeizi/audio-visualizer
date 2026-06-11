@@ -36,12 +36,13 @@ export async function exportWebM(
   fileName: string,
   callbacks: ExportCallbacks,
 ) {
+  const fileHandle = await chooseOutputFile(fileName);
   if (supportsAcceleratedExport()) {
-    return exportWithWebCodecs(analysis, visualizer, settings, fileName, callbacks);
+    return exportWithWebCodecs(analysis, visualizer, settings, fileName, callbacks, fileHandle);
   }
   if (supportsRealtimeExport()) {
     callbacks.onModeChange?.("realtime");
-    return exportWithMediaRecorder(analysis, visualizer, settings, fileName, callbacks);
+    return exportWithMediaRecorder(analysis, visualizer, settings, fileName, callbacks, fileHandle);
   }
   throw new Error("Este navegador no ofrece WebCodecs ni MediaRecorder para crear el video.");
 }
@@ -58,26 +59,27 @@ async function exportWithWebCodecs(
   settings: ExportSettings,
   fileName: string,
   callbacks: ExportCallbacks,
+  fileHandle: FileSystemFileHandle | null,
 ) {
+  const keepAlpha = visualizer.background === "transparent";
   const config: VideoEncoderConfig = {
     codec: "vp09.00.10.08",
     width: settings.width,
     height: settings.height,
     framerate: settings.fps,
     bitrate: getBitrate(settings),
-    alpha: visualizer.background === "transparent" ? "keep" : "discard",
+    alpha: keepAlpha ? "keep" : "discard",
     latencyMode: "quality",
   };
   const support = await VideoEncoder.isConfigSupported(config);
   if (!support.supported) {
     if (supportsRealtimeExport()) {
       callbacks.onModeChange?.("realtime");
-      return exportWithMediaRecorder(analysis, visualizer, settings, fileName, callbacks);
+      return exportWithMediaRecorder(analysis, visualizer, settings, fileName, callbacks, fileHandle);
     }
     throw new Error("Este equipo no soporta codificación VP9 con la configuración seleccionada.");
   }
   callbacks.onModeChange?.("accelerated");
-  const fileHandle = await chooseOutputFile(fileName);
 
   const writable = fileHandle ? await fileHandle.createWritable() : null;
   const target = writable ? new FileSystemWritableFileStreamTarget(writable) : new ArrayBufferTarget();
@@ -88,7 +90,7 @@ async function exportWithWebCodecs(
       width: settings.width,
       height: settings.height,
       frameRate: settings.fps,
-      alpha: visualizer.background === "transparent",
+      alpha: keepAlpha,
     },
   });
 
@@ -100,9 +102,10 @@ async function exportWithWebCodecs(
   encoder.configure(support.config ?? config);
 
   const canvas = new OffscreenCanvas(settings.width, settings.height);
-  const context = canvas.getContext("2d", { alpha: true });
+  const context = canvas.getContext("2d", { alpha: keepAlpha });
   if (!context) throw new Error("No se pudo crear el lienzo de exportación.");
   const spectrum = new Float32Array(analysis.bands);
+  const preparedSpectrum = new Float32Array(analysis.bands);
   const schedule = createFrameSchedule(analysis.duration, settings.fps);
   const nominalFrameDuration = Math.round(1_000_000 / settings.fps);
 
@@ -114,13 +117,18 @@ async function exportWithWebCodecs(
 
       const time = frameIndex / settings.fps;
       fillSpectrumFrame(analysis, time, spectrum);
-      renderVisualizer(context, spectrum, visualizer, { width: settings.width, height: settings.height, time });
+      renderVisualizer(context, spectrum, visualizer, {
+        width: settings.width,
+        height: settings.height,
+        time,
+        preparedSpectrum,
+      });
       const timestamp = schedule.timestamps[frameIndex];
       const nextTimestamp = schedule.timestamps[frameIndex + 1] ?? schedule.endTimestamp;
       const frame = new VideoFrame(canvas, {
         timestamp,
         duration: Math.max(1, nextTimestamp - timestamp),
-        alpha: "keep",
+        alpha: keepAlpha ? "keep" : "discard",
       });
       encoder.encode(frame, { keyFrame: frameIndex % (settings.fps * 4) === 0 });
       frame.close();
@@ -136,7 +144,7 @@ async function exportWithWebCodecs(
     const endpointFrame = new VideoFrame(canvas, {
       timestamp: schedule.endTimestamp,
       duration: nominalFrameDuration,
-      alpha: "keep",
+      alpha: keepAlpha ? "keep" : "discard",
     });
     encoder.encode(endpointFrame, { keyFrame: true });
     endpointFrame.close();
@@ -162,22 +170,24 @@ async function exportWithMediaRecorder(
   settings: ExportSettings,
   fileName: string,
   callbacks: ExportCallbacks,
+  fileHandle: FileSystemFileHandle | null,
 ) {
+  const keepAlpha = false;
   const canvas = document.createElement("canvas");
   canvas.width = settings.width;
   canvas.height = settings.height;
-  const context = canvas.getContext("2d", { alpha: true });
+  const context = canvas.getContext("2d", { alpha: keepAlpha });
   if (!context) throw new Error("No se pudo crear el lienzo de exportación compatible.");
 
   const mimeType = getRecorderMimeType();
   if (!mimeType) throw new Error("Chrome no ofrece un encoder WebM compatible en este contexto.");
   const stream = canvas.captureStream(settings.fps);
   const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: getBitrate(settings) });
-  const fileHandle = await chooseOutputFile(fileName);
   const writable = fileHandle ? await fileHandle.createWritable() : null;
   const chunks: Blob[] = [];
   let writeQueue = Promise.resolve();
   const spectrum = new Float32Array(analysis.bands);
+  const preparedSpectrum = new Float32Array(analysis.bands);
   const fallbackSettings = visualizer.background === "transparent"
     ? { ...visualizer, background: "chroma" as const }
     : visualizer;
@@ -207,7 +217,12 @@ async function exportWithMediaRecorder(
       const draw = (now: number) => {
         const time = Math.min(analysis.duration, (now - startedAt) / 1000);
         fillSpectrumFrame(analysis, time, spectrum);
-        renderVisualizer(context, spectrum, fallbackSettings, { width: settings.width, height: settings.height, time });
+        renderVisualizer(context, spectrum, fallbackSettings, {
+          width: settings.width,
+          height: settings.height,
+          time,
+          preparedSpectrum,
+        });
         callbacks.onProgress(time / analysis.duration);
         if (time >= analysis.duration) {
           recorder.stop();
@@ -247,7 +262,8 @@ export function exportPng(canvas: HTMLCanvasElement, fileName: string) {
 
 function getBitrate(settings: ExportSettings) {
   const raw = settings.width * settings.height * settings.fps * QUALITY_FACTOR[settings.quality];
-  return Math.round(Math.max(700_000, Math.min(12_000_000, raw)));
+  const minimum = settings.width * settings.height <= 854 * 480 ? 250_000 : 500_000;
+  return Math.round(Math.max(minimum, Math.min(12_000_000, raw)));
 }
 
 async function chooseOutputFile(fileName: string) {

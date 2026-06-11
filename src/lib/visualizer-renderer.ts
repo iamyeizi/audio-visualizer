@@ -4,6 +4,7 @@ export interface RenderOptions {
   width: number;
   height: number;
   time?: number;
+  preparedSpectrum?: Float32Array;
 }
 
 export function renderVisualizer(
@@ -17,7 +18,13 @@ export function renderVisualizer(
   context.clearRect(0, 0, width, height);
   drawBackground(context, settings.background, width, height);
 
-  const values = prepareSpectrum(spectrum, settings.cutoff, settings.amplitude, settings.smoothing);
+  const values = prepareSpectrumInto(
+    spectrum,
+    settings.cutoff,
+    settings.amplitude,
+    settings.smoothing,
+    options.preparedSpectrum,
+  );
   context.globalAlpha = settings.opacity;
   context.lineCap = "round";
   context.lineJoin = "round";
@@ -39,6 +46,17 @@ export function renderVisualizer(
 
 export function prepareSpectrum(source: ArrayLike<number>, cutoff: number, amplitude: number, smoothing: number) {
   const output = new Float32Array(source.length);
+  return prepareSpectrumInto(source, cutoff, amplitude, smoothing, output);
+}
+
+export function prepareSpectrumInto(
+  source: ArrayLike<number>,
+  cutoff: number,
+  amplitude: number,
+  smoothing: number,
+  target?: Float32Array,
+) {
+  const output = target?.length === source.length ? target : new Float32Array(source.length);
   const threshold = Math.min(0.95, Math.max(0, cutoff));
   for (let index = 0; index < source.length; index += 1) {
     const raw = Math.max(0, Number(source[index]) || 0);

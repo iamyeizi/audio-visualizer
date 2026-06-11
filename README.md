@@ -8,9 +8,9 @@ Web app client-side para convertir audio en overlays de espectro destinados a ed
 - Seis estilos: Barras, Espejo, Línea, Radial, Puntos y Onda.
 - Color doble, opacidad, amplitud, cut, suavizado, grosor y brillo.
 - Preview sincronizado con reproducción y búsqueda.
-- Exportación WebM VP9 acelerada, sin audio, a 24/30/60 fps.
+- Exportación WebM VP9 acelerada, sin audio, a 12/24/30/60 fps.
 - Fondo transparente, negro o verde chroma.
-- Resoluciones HD, Full HD, vertical, cuadrada y 4K.
+- Resoluciones SD, HD, Full HD, vertical, cuadrada y 4K.
 - Escritura directa a disco con File System Access API para no guardar videos largos completos en RAM.
 
 ## Desarrollo
@@ -51,13 +51,15 @@ La versión de producción compila los assets y los sirve con Nginx en `http://l
 
 1. Cargar el audio y esperar a que termine el análisis.
 2. Ajustar el diseño observando la vista previa.
-3. Exportar con fondo `Transparente` en Chrome o Edge.
-4. Si CapCut no reconoce el canal alpha, exportar con `Verde chroma` y aplicar Chroma Key dentro de CapCut.
+3. Para el flujo más estable en CapCut, exportar con `Verde chroma` y aplicar Chroma Key dentro de CapCut.
+4. Si necesitás alpha real y tu CapCut lo conserva, podés usar `Transparente`, pero suele exigir más memoria y tiempo de codificación.
 5. Colocar el overlay desde el segundo 0 del video. La duración exportada coincide con la del audio.
 
 ## Consideraciones para audios de una hora
 
-El análisis reduce el audio a 12 kHz y se ejecuta en un Web Worker. La exportación se codifica más rápido que tiempo real cuando el hardware lo permite. El tiempo final depende de resolución, fps, estilo y GPU. Chrome y Edge ofrecen el flujo más completo; otros navegadores pueden reproducir y previsualizar, pero no siempre exponen `VideoEncoder` o guardado directo a disco.
+El análisis reduce el audio a 12 kHz y se ejecuta en un Web Worker. La exportación se codifica más rápido que tiempo real cuando el hardware lo permite. El tiempo final depende de resolución, fps, estilo y GPU. Para audios largos conviene empezar con `854 × 480`, `12 fps`, calidad `Borrador` o `Estándar`, y fondo `Verde chroma`.
+
+Chrome y Edge ofrecen el flujo más completo; otros navegadores pueden reproducir y previsualizar, pero no siempre exponen `VideoEncoder` o guardado directo a disco.
 
 WebCodecs requiere un contexto seguro. `http://localhost:8081` se considera seguro en Chrome. Si se abre la aplicación mediante una IP de red como `http://192.168.x.x:8081`, la app cambia automáticamente a `MediaRecorder`: renderiza en tiempo real y utiliza chroma key cuando se había elegido transparencia.
 
