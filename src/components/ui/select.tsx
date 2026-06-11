@@ -7,8 +7,8 @@ export const Select = SelectPrimitive.Root;
 export const SelectValue = SelectPrimitive.Value;
 export const SelectTrigger = React.forwardRef<React.ElementRef<typeof SelectPrimitive.Trigger>, React.ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger>>(
   ({ className, children, ...props }, ref) => (
-    <SelectPrimitive.Trigger ref={ref} className={cn("flex h-9 w-full items-center justify-between rounded-md border bg-background/60 px-3 text-sm outline-none focus:ring-2 focus:ring-ring", className)} {...props}>
-      {children}<SelectPrimitive.Icon asChild><ChevronDown className="h-4 w-4 opacity-50" /></SelectPrimitive.Icon>
+    <SelectPrimitive.Trigger ref={ref} className={cn("flex h-9 w-full items-center justify-between rounded-md border bg-background/60 px-3 text-sm outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:border-border/60 disabled:bg-muted/30 disabled:text-muted-foreground disabled:opacity-70 disabled:focus:ring-0 [&[disabled]_.select-chevron]:opacity-25", className)} {...props}>
+      {children}<SelectPrimitive.Icon asChild><ChevronDown className="select-chevron h-4 w-4 opacity-50" /></SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
   ),
 );

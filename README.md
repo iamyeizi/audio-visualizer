@@ -66,4 +66,4 @@ WebCodecs requiere un contexto seguro. `http://localhost:8081` se considera segu
 
 La exportación WebCodecs genera timestamps absolutos y fija el final del contenedor en la duración decodificada del audio. El fallback `MediaRecorder` depende del reloj real y puede variar unos pocos fotogramas; para sincronización precisa se recomienda abrir la app mediante `localhost`.
 
-El modo `FFmpeg · MP4 chroma` solo está disponible en desarrollo mediante Docker. Recibe el audio en `/api/export-ffmpeg`, genera un espectro con filtros nativos de FFmpeg y devuelve un MP4/H.264 con fondo verde para aplicar Chroma Key en CapCut. Es una ruta de prueba para audios largos y no replica todos los estilos del render canvas.
+El modo `FFmpeg · MP4 chroma` solo está disponible en desarrollo mediante Docker. Recibe el audio en `/api/export-ffmpeg`, genera un espectro con filtros nativos de FFmpeg y devuelve un MP4/H.264 con fondo verde para aplicar Chroma Key en CapCut. MP4/H.264 no conserva transparencia; para alpha real se usa el motor `Navegador · WebM`. Es una ruta de prueba para audios largos y no replica todos los estilos del render canvas.

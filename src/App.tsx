@@ -12,7 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -23,7 +23,7 @@ import { ToastViewport, type ToastMessage, type ToastVariant } from "@/component
 import { PreviewCanvas } from "@/components/preview-canvas";
 import { analyzeAudioFile } from "@/lib/audio-analysis";
 import { exportWithFfmpeg } from "@/lib/export-ffmpeg";
-import { estimateExportSize, exportWebM, getExportMode } from "@/lib/export-video";
+import { estimateExportSize, exportWebM } from "@/lib/export-video";
 import {
   DEFAULT_EXPORT_SETTINGS,
   DEFAULT_VISUALIZER_SETTINGS,
@@ -203,8 +203,6 @@ export function App() {
     () => analysis ? estimateExportSize(exportSettings, analysis.duration) : 0,
     [analysis, exportSettings],
   );
-  const exportMode = useMemo(() => getExportMode(), []);
-
   return (
     <main className="min-h-screen">
       <header className="border-b border-border/70 bg-background/70 backdrop-blur-xl">
@@ -309,8 +307,8 @@ export function App() {
                 </TabsContent>
 
                 <TabsContent value="export" className="space-y-5">
-                  <div className="space-y-2"><Label>Motor</Label><Select value={exportEngine} onValueChange={(value) => setExportEngine(value as ExportEngine)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="browser">Navegador · WebM</SelectItem><SelectItem value="ffmpeg">FFmpeg · MP4</SelectItem></SelectContent></Select></div>
-                  <div className="space-y-2"><Label>Fondo</Label><Select value={visualizer.background} onValueChange={(value) => updateVisualizer("background", value as VisualizerSettings["background"])}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="chroma">Verde</SelectItem><SelectItem value="transparent">Transparente</SelectItem><SelectItem value="black">Negro</SelectItem></SelectContent></Select></div>
+                  <div className="space-y-2"><Label>Motor</Label><Select value={exportEngine} onValueChange={(value) => { const engine = value as ExportEngine; setExportEngine(engine); if (engine === "ffmpeg") updateVisualizer("background", "chroma"); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="browser">Navegador · WebM</SelectItem><SelectItem value="ffmpeg">FFmpeg · MP4</SelectItem></SelectContent></Select></div>
+                  <div className="space-y-2"><Label>Fondo</Label>{exportEngine === "ffmpeg" ? <Select value="chroma" disabled><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="chroma">Verde</SelectItem></SelectContent></Select> : <Select value={visualizer.background} onValueChange={(value) => updateVisualizer("background", value as VisualizerSettings["background"])}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="chroma">Verde</SelectItem><SelectItem value="transparent">Transparente</SelectItem><SelectItem value="black">Negro</SelectItem></SelectContent></Select>}</div>
                   <div className="space-y-2"><Label>Resolución</Label><Select value={`${exportSettings.width}x${exportSettings.height}`} onValueChange={(value) => { const [width, height] = value.split("x").map(Number); setExportSettings((current) => ({ ...current, width, height })); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{RESOLUTIONS.map((resolution) => <SelectItem key={resolution.value} value={resolution.value}>{resolution.label}</SelectItem>)}</SelectContent></Select></div>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-2"><Label>Fotogramas</Label><Select value={String(exportSettings.fps)} onValueChange={(value) => setExportSettings((current) => ({ ...current, fps: Number(value) }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="24">24 fps</SelectItem><SelectItem value="25">25 fps</SelectItem><SelectItem value="30">30 fps</SelectItem><SelectItem value="48">48 fps</SelectItem><SelectItem value="50">50 fps</SelectItem><SelectItem value="60">60 fps</SelectItem></SelectContent></Select></div>
