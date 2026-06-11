@@ -1,10 +1,10 @@
 export const VISUALIZER_STYLES = [
-  { id: "bars", name: "Barras", description: "Columnas limpias y precisas" },
-  { id: "mirror", name: "Espejo", description: "Simetría desde el centro" },
-  { id: "line", name: "Línea", description: "Trazo continuo y orgánico" },
-  { id: "radial", name: "Radial", description: "Espectro circular" },
-  { id: "dots", name: "Puntos", description: "Matriz sutil de partículas" },
-  { id: "wave", name: "Onda", description: "Cinta suave y minimalista" },
+  { id: "bars", name: "Barras" },
+  { id: "mirror", name: "Espejo" },
+  { id: "line", name: "Línea"},
+  { id: "radial", name: "Radial"},
+  { id: "dots", name: "Puntos" },
+  { id: "wave", name: "Onda" },
 ] as const;
 
 export type VisualizerStyle = (typeof VISUALIZER_STYLES)[number]["id"];
