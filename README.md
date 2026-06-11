@@ -8,7 +8,8 @@ Web app client-side para convertir audio en overlays de espectro destinados a ed
 - Seis estilos: Barras, Espejo, Línea, Radial, Puntos y Onda.
 - Color doble, opacidad, amplitud, cut, suavizado, grosor y brillo.
 - Preview sincronizado con reproducción y búsqueda.
-- Exportación WebM VP9 acelerada, sin audio, a 12/24/30/60 fps.
+- Exportación WebM VP9 acelerada, sin audio, a 24/25/30/48/50/60 fps.
+- Exportación experimental MP4/H.264 con FFmpeg en el contenedor dev para Chroma Key.
 - Fondo transparente, negro o verde chroma.
 - Resoluciones SD, HD, Full HD, vertical, cuadrada y 4K.
 - Escritura directa a disco con File System Access API para no guardar videos largos completos en RAM.
@@ -57,10 +58,12 @@ La versión de producción compila los assets y los sirve con Nginx en `http://l
 
 ## Consideraciones para audios de una hora
 
-El análisis reduce el audio a 12 kHz y se ejecuta en un Web Worker. La exportación se codifica más rápido que tiempo real cuando el hardware lo permite. El tiempo final depende de resolución, fps, estilo y GPU. Para audios largos conviene empezar con `854 × 480`, `12 fps`, calidad `Borrador` o `Estándar`, y fondo `Verde chroma`.
+El análisis reduce el audio a 12 kHz y se ejecuta en un Web Worker. La exportación se codifica más rápido que tiempo real cuando el hardware lo permite. El tiempo final depende de resolución, fps, estilo y GPU. Para audios largos conviene empezar con `854 × 480`, `24 fps`, calidad `Borrador` o `Estándar`, y fondo `Verde chroma`.
 
 Chrome y Edge ofrecen el flujo más completo; otros navegadores pueden reproducir y previsualizar, pero no siempre exponen `VideoEncoder` o guardado directo a disco.
 
 WebCodecs requiere un contexto seguro. `http://localhost:8081` se considera seguro en Chrome. Si se abre la aplicación mediante una IP de red como `http://192.168.x.x:8081`, la app cambia automáticamente a `MediaRecorder`: renderiza en tiempo real y utiliza chroma key cuando se había elegido transparencia.
 
 La exportación WebCodecs genera timestamps absolutos y fija el final del contenedor en la duración decodificada del audio. El fallback `MediaRecorder` depende del reloj real y puede variar unos pocos fotogramas; para sincronización precisa se recomienda abrir la app mediante `localhost`.
+
+El modo `FFmpeg · MP4 chroma` solo está disponible en desarrollo mediante Docker. Recibe el audio en `/api/export-ffmpeg`, genera un espectro con filtros nativos de FFmpeg y devuelve un MP4/H.264 con fondo verde para aplicar Chroma Key en CapCut. Es una ruta de prueba para audios largos y no replica todos los estilos del render canvas.
