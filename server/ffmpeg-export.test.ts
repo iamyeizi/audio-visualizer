@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildFfmpegArgs, parseOptions, type FfmpegExportOptions } from "./ffmpeg-export";
+import { buildFfmpegArgs, getRenderChunkFrames, getRenderConcurrency, parseOptions, type FfmpegExportOptions } from "./ffmpeg-export";
 
 const BASE_OPTIONS: FfmpegExportOptions = {
   width: 1280,
@@ -87,5 +87,23 @@ describe("buildFfmpegArgs", () => {
     const command = args.join(" ");
     expect(command).toContain("setpts=PTS*0.999992610255");
     expect(command).toContain("setts=duration=33333:time_base=1/1000000:prescale=1");
+  });
+});
+
+describe("FFmpeg render parallelism", () => {
+  it("uses small chunks for 4K frames to cap memory", () => {
+    expect(getRenderChunkFrames({ width: 3840, height: 2160 })).toBe(1);
+    expect(getRenderChunkFrames({ width: 1280, height: 720 })).toBeGreaterThan(1);
+  });
+
+  it("allows forcing sequential rendering from the environment", () => {
+    const previous = process.env.SPECTRA_FFMPEG_RENDER_WORKERS;
+    process.env.SPECTRA_FFMPEG_RENDER_WORKERS = "1";
+    try {
+      expect(getRenderConcurrency({ width: 1280, height: 720 })).toBe(1);
+    } finally {
+      if (previous === undefined) delete process.env.SPECTRA_FFMPEG_RENDER_WORKERS;
+      else process.env.SPECTRA_FFMPEG_RENDER_WORKERS = previous;
+    }
   });
 });

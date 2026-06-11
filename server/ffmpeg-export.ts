@@ -4,15 +4,18 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, readFile, readdir, rm } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { tmpdir } from "node:os";
+import { availableParallelism, tmpdir } from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
+import { Worker } from "node:worker_threads";
 import { fillSpectrumFrame } from "../src/lib/audio-analysis";
 import type { AudioAnalysis, VisualizerSettings } from "../src/lib/types";
 import { renderVisualizer } from "../src/lib/visualizer-renderer";
 
 const MAX_UPLOAD_BYTES = 64 * 1024 * 1024;
 const QUALITY_CRF = { draft: 30, standard: 24, high: 18 } as const;
+const MAX_RENDER_WORKERS = 6;
+const TARGET_RENDER_CHUNK_BYTES = 48 * 1024 * 1024;
 const jobs = new Map<string, FfmpegJob>();
 let startupCleanupStarted = false;
 let signalHandlersRegistered = false;
@@ -39,6 +42,9 @@ export interface FfmpegExportOptions {
 }
 
 type VisualizerStyle = "bars" | "mirror" | "line" | "radial" | "dots" | "wave";
+type RenderChunkResult = { startFrame: number; frameCount: number; pixels: Uint8Array };
+type RenderChunkRequest = { index: number; startFrame: number; frameCount: number };
+type RenderWorkerMessage = RenderChunkResult & { id: number; error?: string };
 
 interface FfmpegJob {
   id: string;
@@ -346,6 +352,19 @@ function runFfmpegJob(job: FfmpegJob, options: FfmpegExportOptions, duration: nu
 async function renderFramesToFfmpeg(job: FfmpegJob, options: FfmpegExportOptions, ffmpeg: ChildProcess) {
   if (!ffmpeg.stdin) throw new Error("FFmpeg no abrió el canal de video.");
   const frames = new Uint8Array(await readFile(job.inputPath));
+  if (getRenderConcurrency(options) > 1) {
+    await renderFramesToFfmpegParallel(job, options, ffmpeg, frames);
+    return;
+  }
+  await renderFramesToFfmpegSequential(job, options, ffmpeg, frames);
+}
+
+async function renderFramesToFfmpegSequential(
+  job: FfmpegJob,
+  options: FfmpegExportOptions,
+  ffmpeg: ChildProcess,
+  frames: Uint8Array,
+) {
   const analysis: AudioAnalysis = {
     duration: options.duration,
     frameRate: options.analysisFps,
@@ -367,6 +386,8 @@ async function renderFramesToFfmpeg(job: FfmpegJob, options: FfmpegExportOptions
   };
   const canvas = createCanvas(options.width, options.height);
   const context = canvas.getContext("2d");
+  const stdin = ffmpeg.stdin;
+  if (!stdin) throw new Error("FFmpeg cerró el canal de video.");
   const spectrum = new Float32Array(options.bands);
   const preparedSpectrum = new Float32Array(options.bands);
 
@@ -380,10 +401,159 @@ async function renderFramesToFfmpeg(job: FfmpegJob, options: FfmpegExportOptions
       visualizer,
       { width: options.width, height: options.height, time, preparedSpectrum },
     );
-    if (!ffmpeg.stdin.write(canvas.data())) await waitForDrain(ffmpeg);
+    if (!stdin.write(canvas.data())) await waitForDrain(ffmpeg);
+    updateRenderProgress(job, frameIndex + 1, options.frames);
     if (frameIndex % 4 === 0) await yieldToEventLoop();
   }
-  ffmpeg.stdin.end();
+  stdin.end();
+}
+
+async function renderFramesToFfmpegParallel(
+  job: FfmpegJob,
+  options: FfmpegExportOptions,
+  ffmpeg: ChildProcess,
+  frames: Uint8Array,
+) {
+  const concurrency = getRenderConcurrency(options);
+  const chunkFrames = getRenderChunkFrames(options);
+  const stdin = ffmpeg.stdin;
+  if (!stdin) throw new Error("FFmpeg cerró el canal de video.");
+  const chunks = Array.from({ length: Math.ceil(options.frames / chunkFrames) }, (_, index) => {
+    const startFrame = index * chunkFrames;
+    return {
+      index,
+      startFrame,
+      frameCount: Math.min(chunkFrames, options.frames - startFrame),
+    };
+  });
+  const workerCount = Math.min(concurrency, chunks.length);
+  const workers = Array.from({ length: workerCount }, () => createRenderWorker(options, frames));
+  const completed = new Map<number, RenderChunkResult>();
+  const waiters = new Map<number, { resolve: (result: RenderChunkResult) => void; reject: (error: unknown) => void }>();
+  let nextToRender = 0;
+  let writtenFrames = 0;
+  let renderError: unknown;
+
+  const failRender = (error: unknown) => {
+    renderError = error;
+    for (const waiter of waiters.values()) waiter.reject(error);
+    waiters.clear();
+  };
+
+  const storeResult = (index: number, result: RenderChunkResult) => {
+    const waiter = waiters.get(index);
+    if (waiter) {
+      waiters.delete(index);
+      waiter.resolve(result);
+      return;
+    }
+    completed.set(index, result);
+  };
+
+  const waitForChunk = (index: number) => {
+    const result = completed.get(index);
+    if (result) {
+      completed.delete(index);
+      return Promise.resolve(result);
+    }
+    if (renderError) return Promise.reject(renderError);
+    return new Promise<RenderChunkResult>((resolve, reject) => {
+      waiters.set(index, { resolve, reject });
+    });
+  };
+
+  const renderLoop = async (worker: Worker) => {
+    while (job.status === "running") {
+      const chunk = chunks[nextToRender];
+      if (!chunk) return;
+      nextToRender += 1;
+      const result = await renderChunkInWorker(worker, chunk);
+      storeResult(chunk.index, result);
+    }
+  };
+
+  const renderLoops = workers.map((worker) => renderLoop(worker).catch(failRender));
+
+  try {
+    for (let nextToWrite = 0; nextToWrite < chunks.length; nextToWrite += 1) {
+      if (job.status !== "running") return;
+      const result = await waitForChunk(nextToWrite);
+      if (job.status !== "running") return;
+      if (!stdin.write(result.pixels)) await waitForDrain(ffmpeg);
+      writtenFrames += result.frameCount;
+      updateRenderProgress(job, writtenFrames, options.frames);
+      await yieldToEventLoop();
+    }
+    await Promise.all(renderLoops);
+    stdin.end();
+  } finally {
+    await Promise.allSettled(workers.map((worker) => worker.terminate()));
+  }
+}
+
+function createRenderWorker(
+  options: FfmpegExportOptions,
+  frames: Uint8Array,
+) {
+  return new Worker(new URL("./ffmpeg-render-worker.js", import.meta.url), {
+    workerData: { options, frames },
+  });
+}
+
+let renderMessageId = 0;
+
+function renderChunkInWorker(worker: Worker, chunk: RenderChunkRequest) {
+  return new Promise<RenderChunkResult>((resolve, reject) => {
+    const id = renderMessageId = (renderMessageId + 1) % Number.MAX_SAFE_INTEGER;
+    const cleanup = () => {
+      worker.off("message", onMessage);
+      worker.off("error", onError);
+      worker.off("exit", onExit);
+    };
+    const onMessage = (message: RenderWorkerMessage) => {
+      if (message.id !== id) return;
+      cleanup();
+      if (message.error) {
+        reject(new Error(message.error));
+        return;
+      }
+      resolve({
+        startFrame: message.startFrame,
+        frameCount: message.frameCount,
+        pixels: message.pixels,
+      });
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const onExit = (code: number) => {
+      cleanup();
+      if (code !== 0) reject(new Error(`El worker de render terminó con código ${code}.`));
+    };
+    worker.on("message", onMessage);
+    worker.once("error", onError);
+    worker.once("exit", onExit);
+    worker.postMessage({ id, startFrame: chunk.startFrame, frameCount: chunk.frameCount });
+  });
+}
+
+export function getRenderConcurrency(options: Pick<FfmpegExportOptions, "width" | "height">) {
+  const configured = Number(process.env.SPECTRA_FFMPEG_RENDER_WORKERS);
+  const cpuDefault = Math.max(1, Math.min(MAX_RENDER_WORKERS, availableParallelism() - 1));
+  const requested = Number.isFinite(configured) && configured > 0 ? Math.round(configured) : cpuDefault;
+  const frameBytes = options.width * options.height * 4;
+  const memoryBound = Math.max(1, Math.floor((TARGET_RENDER_CHUNK_BYTES * 4) / frameBytes));
+  return Math.max(1, Math.min(requested, memoryBound));
+}
+
+export function getRenderChunkFrames(options: Pick<FfmpegExportOptions, "width" | "height">) {
+  const frameBytes = options.width * options.height * 4;
+  return Math.max(1, Math.floor(TARGET_RENDER_CHUNK_BYTES / frameBytes));
+}
+
+function updateRenderProgress(job: FfmpegJob, renderedFrames: number, totalFrames: number) {
+  job.progress = Math.max(job.progress, Math.min(0.92, (renderedFrames / totalFrames) * 0.92));
 }
 
 function waitForDrain(ffmpeg: ChildProcess) {
